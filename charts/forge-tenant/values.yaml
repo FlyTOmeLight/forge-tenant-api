@@ -1,0 +1,20 @@
+image:
+  repository: forge-tenant-api
+  tag: dev
+  pullPolicy: IfNotPresent
+existingSecret: forge-tenant-env
+caSecret: forge-tenant-ca
+api:
+  replicas: 1
+worker:
+  replicas: 1
+postgres:
+  enabled: true
+  image: postgres:17.6-alpine
+  storage: 5Gi
+  storageClass: ""
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  tlsSecret: ""

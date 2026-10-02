@@ -1,0 +1,6 @@
+apiVersion: v2
+name: forge-task-executor
+description: Optional project-scoped coding task executor
+type: application
+version: 0.2.0
+appVersion: "0.2.0"

@@ -1,0 +1,5 @@
+.git
+.local
+node_modules
+tests
+bin

@@ -1,0 +1,71 @@
+{{- range $mode := list "api" "worker" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $mode }}
+spec:
+  replicas: {{ if eq $mode "api" }}{{ $.Values.api.replicas }}{{ else }}{{ $.Values.worker.replicas }}{{ end }}
+  selector:
+    matchLabels: {app: {{ $.Release.Name }}-{{ $mode }}}
+  template:
+    metadata:
+      labels: {app: {{ $.Release.Name }}-{{ $mode }}}
+      annotations:
+        forge/config-revision: {{ $.Values.configRevision | default "initial" | quote }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 110
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      initContainers:
+        - name: migrate
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: [migrate]
+          envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
+          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}]
+        {{- if eq $mode "api" }}
+        - name: bootstrap
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: [bootstrap]
+          envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
+          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}]
+        {{- end }}
+      containers:
+        - name: {{ $mode }}
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: [{{ $mode }}]
+          envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}]
+          {{- if eq $mode "api" }}
+          ports: [{containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          {{- end }}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+      volumes:
+        - name: ca
+          secret: {secretName: {{ $.Values.caSecret }}}
+---
+{{ end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  selector: {app: {{ .Release.Name }}-api}
+  ports: [{port: 80, targetPort: 8080}]
