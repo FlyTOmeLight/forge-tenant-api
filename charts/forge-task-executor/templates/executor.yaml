@@ -47,12 +47,8 @@ spec:
               value: {{ .Values.gitlabURL | quote }}
             - name: MODEL_URL
               value: {{ .Values.modelURL | quote }}
-            - name: MODEL_NAME
-              value: {{ .Values.modelName | quote }}
             - name: GITLAB_PROJECT_ID
               value: {{ .Values.gitlabProjectID | quote }}
-            - name: GITLAB_PROJECT_PATH
-              value: {{ .Values.gitlabProjectPath | quote }}
             - name: WORKSPACE_ROOT
               value: /workspace
             - name: WORKER_ID

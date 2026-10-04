@@ -26,3 +26,23 @@ CREATE TABLE IF NOT EXISTS coding_feedback (
  id text PRIMARY KEY, task_id text NOT NULL REFERENCES coding_tasks(id), submitted_by text NOT NULL REFERENCES users(id),
  head text NOT NULL, requirements text NOT NULL, status text NOT NULL DEFAULT 'Pending', created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE coding_tasks DROP CONSTRAINT IF EXISTS coding_tasks_mr_iid_check;
+ALTER TABLE coding_tasks ADD CONSTRAINT coding_tasks_mr_iid_check CHECK(mr_iid>=0);
+ALTER TABLE coding_tasks DROP CONSTRAINT IF EXISTS coding_tasks_project_id_mr_iid_key;
+CREATE UNIQUE INDEX IF NOT EXISTS coding_one_mr ON coding_tasks(project_id,mr_iid) WHERE mr_iid>0;
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS base_branch text NOT NULL DEFAULT '';
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS reproduce text NOT NULL DEFAULT '';
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS constraints text NOT NULL DEFAULT '';
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS reference text NOT NULL DEFAULT '';
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS request_key text NOT NULL DEFAULT '';
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS request_hash text NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS coding_task_request ON coding_tasks(request_key) WHERE request_key<>'';
+ALTER TABLE coding_runs ADD COLUMN IF NOT EXISTS config_snapshot jsonb NOT NULL DEFAULT '{}';
+CREATE TABLE IF NOT EXISTS coding_project_settings (
+ project_id text PRIMARY KEY,tenant_id text NOT NULL,version bigint NOT NULL DEFAULT 1,
+ settings jsonb NOT NULL,checked_at timestamptz,
+ FOREIGN KEY(tenant_id,project_id) REFERENCES projects(tenant_id,id)
+);
+CREATE TABLE IF NOT EXISTS coding_executors (worker_id text PRIMARY KEY,gitlab_project_id bigint NOT NULL,last_seen timestamptz NOT NULL);
+INSERT INTO schema_versions(version) VALUES(4) ON CONFLICT DO NOTHING;
+ALTER TABLE coding_tasks ADD COLUMN IF NOT EXISTS agent_judgment jsonb NOT NULL DEFAULT '{"status":"Unknown"}';

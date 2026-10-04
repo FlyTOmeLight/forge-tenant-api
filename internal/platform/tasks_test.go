@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,8 +23,17 @@ func setupTask(t *testing.T) *taskFixture {
 	if e != nil {
 		t.Fatal(e)
 	}
+	config := CodingSettings{Version: 1, BaseBranch: "master", Model: "local-model", AllowedPaths: []string{"src/"}, Checks: []string{"go test ./..."}, RepairLimit: 3, TimeoutMinutes: 30}
+	rawConfig, _ := json.Marshal(config)
+	if _, e = f.a.DB.Exec(f.ctx, `INSERT INTO coding_project_settings(tenant_id,project_id,version,settings,checked_at) VALUES('t','p',1,$1,now())`, rawConfig); e != nil {
+		t.Fatal(e)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/repository/branches/") {
+			JSON(w, 200, Object{"name": "master", "commit": Object{"id": f.head}})
+			return
+		}
 		if r.URL.Path == "/api/v4/projects/77/merge_requests/1/discussions" {
 			_ = json.NewEncoder(w).Encode([]any{Object{"id": "discussion", "notes": []any{Object{"body": "nested traversal", "position": Object{"new_path": "path.go", "new_line": 69, "head_sha": f.head}}}}})
 			return
@@ -333,5 +344,105 @@ func TestTaskExecutorClaimsOnlyConfiguredProject(t *testing.T) {
 	}
 	if code, out := f.internal(t, "/internal/v1/tasks/claim", Object{"worker": "configured-project", "gitlabProjectId": 77}); code != 200 || out["run"] == nil {
 		t.Fatal(code, out)
+	}
+}
+
+func TestProblemCreationQueuesWithoutEmptyMRAndReplays(t *testing.T) {
+	f := setupTask(t)
+	payload := Object{"title": "Fix new issue", "description": "bad request", "reproduce": "send empty parameter", "criteria": "no error", "constraints": "keep interfaces"}
+	path := "/api/v1/tenants/t/projects/p/tasks/new"
+	code, out := f.call(t, f.operator, "POST", path, payload, 0, "new-task-key")
+	if code != 201 {
+		t.Fatal(code, out)
+	}
+	id := out["id"]
+	if out["mrIid"] != float64(0) || out["status"] != "Queued" || out["control"] != "Agent" {
+		t.Fatal(out)
+	}
+	if code, replay := f.call(t, f.operator, "POST", path, payload, 0, "new-task-key"); code != 200 || replay["id"] != id {
+		t.Fatal(code, replay)
+	}
+	payload["title"] = "different request"
+	if code, out := f.call(t, f.operator, "POST", path, payload, 0, "new-task-key"); code != 409 {
+		t.Fatal(code, out)
+	}
+	code, claimed := f.internal(t, "/internal/v1/tasks/claim", Object{"worker": "generic", "gitlabProjectId": 77})
+	if code != 200 {
+		t.Fatal(code, claimed)
+	}
+	run := claimed["run"].(map[string]any)
+	if run["projectPath"] != "task-test/repo" || run["config"].(map[string]any)["model"] != "local-model" {
+		t.Fatal(run)
+	}
+	// A settings edit must not alter an already queued round.
+	if _, e := f.a.DB.Exec(f.ctx, `UPDATE coding_project_settings SET version=2,settings=jsonb_set(settings,'{model}','"new-model"') WHERE project_id='p'`); e != nil {
+		t.Fatal(e)
+	}
+	var model string
+	if e := f.a.DB.QueryRow(f.ctx, `SELECT config_snapshot->>'model' FROM coding_runs WHERE id=$1`, run["id"]).Scan(&model); e != nil || model != "local-model" {
+		t.Fatal(model, e)
+	}
+}
+func TestProjectConfigChangesRequireFreshCheck(t *testing.T) {
+	f := setupTask(t)
+	body := Object{"version": 1, "baseBranch": "master", "model": "local-model", "allowedPaths": []string{"src/"}, "checks": []string{"go test ./..."}, "repairLimit": 3, "timeoutMinutes": 30}
+	code, out := f.call(t, f.operator, "PUT", "/api/v1/tenants/t/projects/p/coding-settings", body, 0, "")
+	if code != 200 || out["version"] != float64(2) || out["checkedAt"] != nil {
+		t.Fatal(code, out)
+	}
+	if code, out := f.act(t, "Resume", nil); code != 409 {
+		t.Fatal(code, out)
+	}
+	if code, out := f.call(t, f.operator, "PUT", "/api/v1/tenants/t/projects/p/coding-settings", body, 0, ""); code != 412 {
+		t.Fatal(code, out)
+	}
+}
+func TestReadOnlyDesignatedReviewerCanApproveButNotIntervene(t *testing.T) {
+	f := setupTask(t)
+	if _, e := f.a.DB.Exec(f.ctx, `UPDATE grants SET desired_level=20,observed_level=20,effective_level=20 WHERE membership_id='ma'`); e != nil {
+		t.Fatal(e)
+	}
+	if code, out := f.act(t, "Approve", nil); code != 200 {
+		t.Fatal(code, out)
+	}
+	if code, out := f.act(t, "Intervene", nil); code != 403 {
+		t.Fatal(code, out)
+	}
+	code, out := f.call(t, f.operator, "GET", "/api/v1/tenants/t/projects/p/tasks/"+f.task.ID, nil, 0, "")
+	if code != 200 || out["permissions"].(map[string]any)["manage"] != false {
+		t.Fatal(code, out)
+	}
+}
+
+// Exercise an actual v3 task row through repeated upgrades, not just empty schemas.
+func TestTaskSchemaUpgradePreservesAssociatedMR(t *testing.T) {
+	f := setupTask(t)
+	legacy, err := os.ReadFile("testdata/tasks-v3.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.a.DB.Exec(f.ctx, `DROP TABLE coding_events,coding_feedback,coding_runs,coding_tasks,coding_project_settings,coding_executors; DELETE FROM schema_versions WHERE version>=3`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.a.DB.Exec(f.ctx, string(legacy)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.a.DB.Exec(f.ctx, `INSERT INTO coding_tasks(id,tenant_id,project_id,owner_id,title,description,criteria,branch,target_branch,mr_iid,head,reviewer_ids) VALUES('legacy','t','p','operator','Existing task','Reproduce','Criteria','fix','master',1,$1,ARRAY['operator'])`, f.head); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err = f.a.Migrate(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := scanTask(f.a.DB.QueryRow(f.ctx, `SELECT `+taskColumns+` FROM coding_tasks WHERE id='legacy'`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.MRIID != 1 || task.Head != f.head || task.Title != "Existing task" || task.Control != "Human" {
+		t.Fatal(task)
+	}
+	if _, err = f.a.DB.Exec(f.ctx, `INSERT INTO coding_tasks(id,tenant_id,project_id,owner_id,title,description,criteria,branch,target_branch,mr_iid,head,reviewer_ids) SELECT 'new-'||n,tenant_id,project_id,owner_id,title,description,criteria,'agent/new-'||n,target_branch,0,head,reviewer_ids FROM coding_tasks CROSS JOIN generate_series(1,2) n WHERE id='legacy'`); err != nil {
+		t.Fatal(err)
 	}
 }

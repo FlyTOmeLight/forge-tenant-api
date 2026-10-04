@@ -59,7 +59,7 @@ kubectl --context orbstack -n forge-tenant port-forward service/forge-tenant-web
 - 降权先限制平台能力；升权等待当前版本远端确认；继承权限冲突可诊断和重试。
 - Coding Agent 鉴权、持久化撤权事件，以及从原仓库迁入的代码任务 API 与试点执行器代码。
 
-HTTP 契约见 [docs/api.md](docs/api.md)，访问控制接入见 [docs/agent-integration.md](docs/agent-integration.md)，任务状态与执行器见 [docs/coding-tasks.md](docs/coding-tasks.md)。任务执行器仍受原有试点项目和文件范围限制，本次拆分不扩大执行范围。
+HTTP 契约见 [docs/api.md](docs/api.md)，访问控制接入见 [docs/agent-integration.md](docs/agent-integration.md)，任务状态与执行器见 [docs/coding-tasks.md](docs/coding-tasks.md)。执行器按 Helm 配置限制项目，按每轮配置快照限制修改范围与检查命令。
 
 邮件、MFA、密码找回、计费和通用多项目执行器不在本轮范围。当前列表有数量上限（企业/账号 200，成员/团队/项目 500，授权 1000，操作/审计 100），尚未分页。
 
@@ -73,10 +73,10 @@ HTTP 契约见 [docs/api.md](docs/api.md)，访问控制接入见 [docs/agent-in
 
 为保留另一会话对原平台的并行修改，本轮使用 namespace `forge-tenant-split`、独立 PostgreSQL 和 OIDC client `forge-tenant-split-console`，浏览器入口为 `http://127.0.0.1:8483`。该环境中的企业和项目是验收数据；原 `forge-tenant` / 8383 及其数据未被切换或覆盖。
 
-继续更新此验证环境时使用 `FORGE_NAMESPACE=forge-tenant-split FORGE_IMAGE_TAG=0.2.0-final ./scripts/deploy-lab.sh`。前端 E2E 同时设置 `FORGE_NAMESPACE=forge-tenant-split`。本机端口转发命令：
+继续更新此验证环境时使用 `FORGE_NAMESPACE=forge-tenant-split FORGE_IMAGE_TAG=0.3.0-migration ./scripts/deploy-lab.sh`。前端 E2E 同时设置 `FORGE_NAMESPACE=forge-tenant-split`。本机端口转发命令：
 
 ```sh
 kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tenant-web 8483:80
 ```
 
-本轮迁移以开始时的功能快照为准，包括当时的 MR 关联任务；开发过程中新增的项目执行配置、直接创建问题任务等留在原仓库，后续单独迁入。
+后续功能已迁入：项目执行配置与接入检查、直接新建问题任务、多审查者、每轮配置快照、Agent 判断、代码差异，以及统一导航下的三种任务布局。真实模型完整交付验收作为下一步单独执行。

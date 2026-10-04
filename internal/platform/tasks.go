@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,11 @@ var taskSchema string
 
 // CodingTask keeps code ownership separate from task responsibility and review.
 type CodingTask struct {
+	AgentJudgment   json.RawMessage `json:"agentJudgment"`
+	BaseBranch      string          `json:"baseBranch"`
+	Reproduce       string          `json:"reproduce"`
+	Constraints     string          `json:"constraints"`
+	Reference       string          `json:"reference"`
 	ID              string          `json:"id"`
 	TenantID        string          `json:"tenantId"`
 	ProjectID       string          `json:"projectId"`
@@ -48,16 +54,21 @@ type CodingTask struct {
 	UpdatedAt       time.Time       `json:"updatedAt"`
 }
 
-const taskColumns = `id,tenant_id,project_id,owner_id,title,description,criteria,branch,target_branch,mr_iid,head,status,control,version,epoch,round,checks,checked_head,approval_head,reviewer_ids,active_run,stop_requested_at,stop_confirmed,discussions,synthetic,updated_at`
+const taskColumns = `id,tenant_id,project_id,owner_id,title,description,criteria,branch,target_branch,mr_iid,head,status,control,version,epoch,round,checks,checked_head,approval_head,reviewer_ids,active_run,stop_requested_at,stop_confirmed,discussions,synthetic,updated_at,base_branch,reproduce,constraints,reference,agent_judgment`
 
 func scanTask(row pgx.Row) (CodingTask, error) {
 	var t CodingTask
-	e := row.Scan(&t.ID, &t.TenantID, &t.ProjectID, &t.OwnerID, &t.Title, &t.Description, &t.Criteria, &t.Branch, &t.TargetBranch, &t.MRIID, &t.Head, &t.Status, &t.Control, &t.Version, &t.Epoch, &t.Round, &t.Checks, &t.CheckedHead, &t.ApprovalHead, &t.ReviewerIDs, &t.ActiveRun, &t.StopRequestedAt, &t.StopConfirmed, &t.Discussions, &t.Synthetic, &t.UpdatedAt)
+	e := row.Scan(&t.ID, &t.TenantID, &t.ProjectID, &t.OwnerID, &t.Title, &t.Description, &t.Criteria, &t.Branch, &t.TargetBranch, &t.MRIID, &t.Head, &t.Status, &t.Control, &t.Version, &t.Epoch, &t.Round, &t.Checks, &t.CheckedHead, &t.ApprovalHead, &t.ReviewerIDs, &t.ActiveRun, &t.StopRequestedAt, &t.StopConfirmed, &t.Discussions, &t.Synthetic, &t.UpdatedAt, &t.BaseBranch, &t.Reproduce, &t.Constraints, &t.Reference, &t.AgentJudgment)
 	return t, e
 }
 func (a *App) taskRoutes(m *gin.Engine) {
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/tasks", a.authorized(a.listTasks))
 	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/tasks", a.authorized(a.createTask))
+	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/tasks/new", a.authorized(a.createProblemTask))
+	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/coding-settings", a.authorized(a.getCodingSettings))
+	route(m, "PUT", "/api/v1/tenants/:tid/projects/:pid/coding-settings", a.authorized(a.saveCodingSettings))
+	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/coding-settings/check", a.authorized(a.checkCodingSettings))
+	route(m, "GET", "/api/v1/coding/connections", a.authorized(a.codingConnections))
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/tasks/:task", a.authorized(a.getTask))
 	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/tasks/:task/actions", a.authorized(a.taskAction))
 	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/tasks/:task/sync", a.authorized(a.syncTask))
@@ -128,7 +139,7 @@ func (a *App) getTask(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, e)
 		return
 	}
-	runs, e := collect(r.Context(), a.DB, `SELECT id,epoch,head,status,requirements,output,created_at,finished_at FROM coding_runs WHERE task_id=$1 ORDER BY created_at DESC LIMIT 30`, t.ID)
+	runs, e := collect(r.Context(), a.DB, `SELECT id,epoch,head,status,requirements,output,config_snapshot,created_at,finished_at FROM coding_runs WHERE task_id=$1 ORDER BY created_at DESC LIMIT 30`, t.ID)
 	if e != nil {
 		fail(w, e)
 		return
@@ -143,7 +154,11 @@ func (a *App) getTask(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, e)
 		return
 	}
-	JSON(w, 200, Object{"feedback": feedback, "gitlabUrl": strings.TrimRight(a.Config.GitLabPublicURL, "/") + "/" + projectPath + "/-/merge_requests/" + strconv.FormatInt(t.MRIID, 10), "task": t, "events": events, "runs": runs, "permissions": Object{"write": level >= 30, "manage": level >= 40 || t.OwnerID == u.ID, "review": level >= 30 && slices.Contains(t.ReviewerIDs, u.ID)}})
+	gitlabURL := strings.TrimRight(a.Config.GitLabPublicURL, "/") + "/" + projectPath + "/-/tree/" + url.PathEscape(t.Branch)
+	if t.MRIID > 0 {
+		gitlabURL = strings.TrimRight(a.Config.GitLabPublicURL, "/") + "/" + projectPath + "/-/merge_requests/" + strconv.FormatInt(t.MRIID, 10)
+	}
+	JSON(w, 200, Object{"feedback": feedback, "gitlabUrl": gitlabURL, "task": t, "events": events, "runs": runs, "permissions": Object{"write": level >= 30, "manage": level >= 40 || (level >= 30 && t.OwnerID == u.ID), "review": level >= 20 && slices.Contains(t.ReviewerIDs, u.ID)}})
 }
 func (a *App) taskProject(ctx context.Context, tid, pid string) (int64, error) {
 	var id int64
@@ -206,7 +221,7 @@ func (a *App) createTask(w http.ResponseWriter, r *http.Request, u User) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	t, e := scanTask(tx.QueryRow(r.Context(), `INSERT INTO coding_tasks(id,tenant_id,project_id,owner_id,title,description,criteria,branch,target_branch,mr_iid,head,reviewer_ids,synthetic) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(project_id,mr_iid) DO UPDATE SET id=coding_tasks.id RETURNING `+taskColumns, ID("task"), r.PathValue("tid"), r.PathValue("pid"), u.ID, b.Title, b.Description, b.Criteria, mr.Source, mr.Target, mr.IID, mr.Head, []string{u.ID}, b.Synthetic))
+	t, e := scanTask(tx.QueryRow(r.Context(), `INSERT INTO coding_tasks(id,tenant_id,project_id,owner_id,title,description,criteria,branch,target_branch,mr_iid,head,reviewer_ids,synthetic) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(project_id,mr_iid) WHERE mr_iid>0 DO UPDATE SET id=coding_tasks.id RETURNING `+taskColumns, ID("task"), r.PathValue("tid"), r.PathValue("pid"), u.ID, b.Title, b.Description, b.Criteria, mr.Source, mr.Target, mr.IID, mr.Head, []string{u.ID}, b.Synthetic))
 	if e != nil {
 		fail(w, e)
 		return
@@ -229,8 +244,8 @@ func (a *App) taskAction(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, e)
 		return
 	}
-	if level < 30 {
-		fail(w, problem(403, "WRITE_REQUIRED", "需要项目代码写权限"))
+	if level < 20 {
+		fail(w, problem(403, "READ_REQUIRED", "需要项目读取权限"))
 		return
 	}
 	var b struct {
@@ -258,6 +273,10 @@ func (a *App) taskAction(w http.ResponseWriter, r *http.Request, u User) {
 	}
 	if t.Version != b.Version {
 		fail(w, problem(412, "STALE_VERSION", "任务已变化，请刷新后操作"))
+		return
+	}
+	if level < 30 && b.Action != "Approve" && b.Action != "Feedback" && b.Action != "ReconfirmFeedback" {
+		fail(w, problem(403, "WRITE_REQUIRED", "需要项目代码写权限"))
 		return
 	}
 	manage := t.OwnerID == u.ID || level >= 40
@@ -398,7 +417,7 @@ func (a *App) taskAction(w http.ResponseWriter, r *http.Request, u User) {
 			fail(w, err)
 			return
 		}
-		mr, err := a.GitLab.MergeRequest(r.Context(), remoteID, t.MRIID)
+		mr, err := a.currentTaskMR(r.Context(), remoteID, t)
 		if err != nil {
 			fail(w, err)
 			return
@@ -407,6 +426,12 @@ func (a *App) taskAction(w http.ResponseWriter, r *http.Request, u User) {
 			fail(w, problem(409, "MR_CHANGED", "MR 状态或代码已变化，请先同步"))
 			return
 		}
+		config, err := a.readyTaskSettings(r.Context(), t)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		configRaw, _ := json.Marshal(config)
 		requirements := strings.TrimSpace(b.Text)
 		if b.Action == "NextFeedback" {
 			if t.Control != "Agent" {
@@ -437,12 +462,13 @@ func (a *App) taskAction(w http.ResponseWriter, r *http.Request, u User) {
 		t.Round++
 		t.Control = "Agent"
 		t.Status = "Queued"
+		t.AgentJudgment = json.RawMessage(`{"status":"Unknown"}`)
 		t.Checks = "NotRun"
 		t.CheckedHead = ""
 		t.ApprovalHead = ""
 		t.ActiveRun = &run
 		t.StopRequestedAt = nil
-		_, e = tx.Exec(r.Context(), `INSERT INTO coding_runs(id,task_id,epoch,head,requirements) VALUES($1,$2,$3,$4,$5)`, run, t.ID, t.Epoch, t.Head, requirements)
+		_, e = tx.Exec(r.Context(), `INSERT INTO coding_runs(id,task_id,epoch,head,requirements,config_snapshot) VALUES($1,$2,$3,$4,$5,$6)`, run, t.ID, t.Epoch, t.Head, requirements, configRaw)
 		detail["runId"] = run
 	default:
 		fail(w, problem(400, "INVALID_ACTION", "不支持的任务操作"))
@@ -468,7 +494,7 @@ func (a *App) taskAction(w http.ResponseWriter, r *http.Request, u User) {
 	JSON(w, 200, t)
 }
 func writeTask(ctx context.Context, tx pgx.Tx, t CodingTask) error {
-	_, e := tx.Exec(ctx, `UPDATE coding_tasks SET owner_id=$2,head=$3,status=$4,control=$5,epoch=$6,round=$7,checks=$8,checked_head=$9,approval_head=$10,active_run=$11,stop_requested_at=$12,stop_confirmed=$13,discussions=$14,version=version+1,updated_at=now() WHERE id=$1`, t.ID, t.OwnerID, t.Head, t.Status, t.Control, t.Epoch, t.Round, t.Checks, t.CheckedHead, t.ApprovalHead, t.ActiveRun, t.StopRequestedAt, t.StopConfirmed, t.Discussions)
+	_, e := tx.Exec(ctx, `UPDATE coding_tasks SET owner_id=$2,head=$3,status=$4,control=$5,epoch=$6,round=$7,checks=$8,checked_head=$9,approval_head=$10,active_run=$11,stop_requested_at=$12,stop_confirmed=$13,discussions=$14,mr_iid=$15,agent_judgment=$16,version=version+1,updated_at=now() WHERE id=$1`, t.ID, t.OwnerID, t.Head, t.Status, t.Control, t.Epoch, t.Round, t.Checks, t.CheckedHead, t.ApprovalHead, t.ActiveRun, t.StopRequestedAt, t.StopConfirmed, t.Discussions, t.MRIID, t.AgentJudgment)
 	return e
 }
 
@@ -488,15 +514,18 @@ func (a *App) syncTask(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, e)
 		return
 	}
-	mr, e := a.GitLab.MergeRequest(r.Context(), remoteID, t.MRIID)
+	mr, e := a.currentTaskMR(r.Context(), remoteID, t)
 	if e != nil {
 		fail(w, e)
 		return
 	}
-	notes, e := a.GitLab.MRDiscussions(r.Context(), remoteID, t.MRIID)
-	if e != nil {
-		fail(w, e)
-		return
+	notes := []map[string]any{}
+	if t.MRIID > 0 {
+		notes, e = a.GitLab.MRDiscussions(r.Context(), remoteID, t.MRIID)
+		if e != nil {
+			fail(w, e)
+			return
+		}
 	}
 	snapshotVersion := t.Version
 	raw, e := json.Marshal(notes)
@@ -519,6 +548,9 @@ func (a *App) syncTask(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, problem(409, "STALE_SYNC", "同步期间任务已变化，请重试同步"))
 		return
 	}
+	if mr.IID > 0 {
+		t.MRIID = mr.IID
+	}
 	changed := t.Head != mr.Head
 	t.Discussions = raw
 	expectedPush := false
@@ -534,6 +566,7 @@ func (a *App) syncTask(w http.ResponseWriter, r *http.Request, u User) {
 			fail(w, e)
 			return
 		}
+		t.AgentJudgment = json.RawMessage(`{"status":"Unknown"}`)
 		t.Checks = "NotRun"
 		t.CheckedHead = ""
 		t.ApprovalHead = ""
@@ -588,6 +621,7 @@ func (a *App) syncTask(w http.ResponseWriter, r *http.Request, u User) {
 }
 
 type taskRunRequest struct {
+	MRIID           int64           `json:"mrIid"`
 	GitLabProjectID int64           `json:"gitlabProjectId"`
 	RunID           string          `json:"runId"`
 	Epoch           int64           `json:"epoch"`
@@ -606,6 +640,11 @@ func (a *App) claimTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if b.Worker == "" || len(b.Worker) > 100 {
 		fail(w, problem(400, "INVALID_WORKER", "执行器标识无效"))
+		return
+	}
+	_, e := a.DB.Exec(r.Context(), `INSERT INTO coding_executors(worker_id,gitlab_project_id,last_seen) VALUES($1,$2,now()) ON CONFLICT(worker_id) DO UPDATE SET gitlab_project_id=EXCLUDED.gitlab_project_id,last_seen=now()`, b.Worker, b.GitLabProjectID)
+	if e != nil {
+		fail(w, e)
 		return
 	}
 	tx, e := a.DB.Begin(r.Context())
@@ -680,7 +719,14 @@ func (a *App) claimTask(w http.ResponseWriter, r *http.Request) {
 		fail(w, e)
 		return
 	}
-	JSON(w, 200, Object{"run": Object{"id": run, "epoch": epoch, "requirements": requirements, "task": t, "gitlabProjectId": id}})
+	var snapshot json.RawMessage
+	var projectPath string
+	e = a.DB.QueryRow(r.Context(), `SELECT r.config_snapshot,p.path FROM coding_runs r JOIN coding_tasks t ON t.id=r.task_id JOIN projects p ON p.id=t.project_id WHERE r.id=$1`, run).Scan(&snapshot, &projectPath)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	JSON(w, 200, Object{"run": Object{"id": run, "epoch": epoch, "requirements": requirements, "task": t, "gitlabProjectId": id, "projectPath": projectPath, "config": snapshot}})
 }
 func (a *App) taskGate(w http.ResponseWriter, r *http.Request) {
 	var b taskRunRequest
@@ -784,19 +830,31 @@ func (a *App) finishTask(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
-		mr, err := a.GitLab.MergeRequest(r.Context(), remoteID, t.MRIID)
+		candidate := t
+		if t.MRIID == 0 && b.MRIID > 0 {
+			candidate.MRIID = b.MRIID
+		}
+		mr, err := a.currentTaskMR(r.Context(), remoteID, candidate)
 		if err != nil {
 			fail(w, err)
 			return
 		}
-		if mr.State != "opened" || mr.Head != b.Head {
+		if mr.State != "opened" || mr.Head != b.Head || mr.Source != t.Branch || mr.Target != t.TargetBranch {
 			fail(w, problem(409, "REMOTE_COMMIT_MISMATCH", "交付 commit 与 GitLab 当前版本不一致"))
 			return
 		}
+		t.MRIID = candidate.MRIID
 		t.Head = b.Head
 		if _, e = tx.Exec(r.Context(), `UPDATE coding_feedback SET status='NeedsReconfirmation' WHERE task_id=$1 AND status='Pending' AND head<>$2`, t.ID, t.Head); e != nil {
 			fail(w, e)
 			return
+		}
+		var evidence struct {
+			Judgment json.RawMessage `json:"judgment"`
+		}
+		_ = json.Unmarshal(b.Output, &evidence)
+		if len(evidence.Judgment) > 0 {
+			t.AgentJudgment = evidence.Judgment
 		}
 		t.Checks = b.Status
 		t.CheckedHead = b.Head

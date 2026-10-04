@@ -25,6 +25,7 @@ jobs:
           cache: true
       - run: test -z "$(gofmt -l cmd internal)"
       - run: go test -tags=nomsgpack -race -count=1 ./...
+      - run: python3 -m unittest discover -s scripts/task-executor -p "test_*.py"
       - run: go vet -tags=nomsgpack ./...
       - run: go build -tags=nomsgpack ./cmd/forge
       - uses: azure/setup-helm@v4.3.0
