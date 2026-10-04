@@ -1,6 +1,6 @@
 # Coding Agent 集成契约
 
-租户服务通过 HTTP 提供授权事实，不导出 Go 内部包。Coding Agent 当前只有独立设计项目，尚未接入执行器；本仓库不会假装执行过任务停止、连接关闭或 GitLab 写入拦截。
+租户服务通过 HTTP 提供授权事实，不导出 Go 内部包。Coding Agent 业务由独立的 forge-coding-api 实现，运行时由 Agentic Kit 提供。
 
 ## 操作前鉴权
 
@@ -33,4 +33,4 @@ Authorization: Bearer <SERVICE_TOKEN>
 
 读取授权与调用 GitLab 之间仍有在途窗口。执行器应集中持有写凭证并通过写入闸门发出外部请求，避免发放可绕过闸门的长期通用凭证。已经送达 GitLab 的操作不能承诺撤回，需要核验与审计其结果。
 
-访问事件接口采用有游标的持久化拉取，不提供消费者 ACK 或推送 Webhook。已迁入的代码任务另有 gate / finish 与停止确认协议，见 [coding-tasks.md](coding-tasks.md)。其他 Agent 应自行完成在途操作、停止确认与流断开的集成验收。
+访问事件接口采用有游标的持久化拉取，不提供消费者 ACK 或推送 Webhook。独立 Coding 服务实现 gate / finish 与停止确认协议，见 [Coding 契约](https://github.com/FlyTOmeLight/forge-coding-api/blob/main/docs/coding-tasks.md)。其他 Agent 应自行完成在途操作、停止确认与流断开的集成验收。

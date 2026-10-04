@@ -73,18 +73,13 @@
 
 同一幂等键须对应相同操作者、路径、请求体和版本。幂等结果加密保存在数据库中；重复请求返回原操作，不重复产生业务变更。
 
-## 项目执行配置与新问题任务
+## Coding 服务集成
 
-`GET /api/v1/platform/connections` 返回 GitLab 与模型探测结果及当前会话的身份接入信息。
+任务与执行配置由 [forge-coding-api](https://github.com/FlyTOmeLight/forge-coding-api) 提供。租户 API 不再注册这些路由。
 
-项目路径 `/api/v1/tenants/{tid}/projects/{pid}` 下新增：
-
-- `GET /coding-settings`：读取配置、分支、在线执行器和管理权限。
-- `PUT /coding-settings`：项目管理员按请求体 `version` 更新配置；保存后使检查状态失效。
-- `POST /coding-settings/check`：验证基准分支提交及模型存在，记录该配置版本。
-- `POST /tasks/new`：需要项目写权限与已检查配置；以 `Idempotency-Key` 防重，创建 `mrIid=0` 的任务和排队轮次。必填问题、复现及验收条件，`reviewerIds` 支持多位具有读取权限的审查者。
-
-每轮 `config_snapshot` 固定当时配置。旧的 `POST /tasks` 仍可关联现有开放 MR；任务完成结果可携带新生成的 `mrIid` 与独立 Agent 判断。完整契约见 [coding-tasks.md](coding-tasks.md)。
+- `POST /internal/v1/session/check`：服务身份调用，提交 session、method、origin、csrf，返回已验证用户。写请求必须通过 Origin / CSRF 检查。
+- `POST /internal/v1/projects/resolve`：服务身份调用，按 tenant_id 与 project_id 返回 GitLab 项目 ID 和路径，不返回凭据。
+- 项目成员与角色、`/internal/v1/access/check` 和持久化撤权事件仍由租户 API 维护。
 
 ## 角色与多团队授权
 

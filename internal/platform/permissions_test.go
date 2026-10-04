@@ -16,7 +16,6 @@ func TestPlatformRoleDoesNotGrantTenantMembership(t *testing.T) {
 	}{
 		{f.operator, "GET", "/api/v1/platform/tenants", nil, 200},
 		{f.member, "GET", "/api/v1/platform/tenants", nil, 403},
-		{f.member, "GET", "/api/v1/platform/connections", nil, 403},
 		{f.operator, "GET", "/api/v1/tenants/" + tid, nil, 404},
 		{f.operator, "POST", "/api/v1/tenants/" + tid + "/teams", Object{"name": "No bypass"}, 404},
 		{f.member, "GET", "/api/v1/tenants/" + tid, nil, 200},
@@ -40,7 +39,7 @@ func TestPlatformRoleDoesNotGrantTenantMembership(t *testing.T) {
 	}
 }
 func TestProjectPeopleAndAdministrativeCapabilities(t *testing.T) {
-	f := setupTask(t)
+	f := setupProject(t)
 	for _, test := range []struct {
 		name                           string
 		desired, observed, effective   int

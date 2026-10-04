@@ -5,7 +5,7 @@ import (
 )
 
 func TestTeamGrantSourcesAndRevocation(t *testing.T) {
-	f := setupTask(t)
+	f := setupProject(t)
 	if _, e := f.a.DB.Exec(f.ctx, `INSERT INTO teams(id,tenant_id,name) VALUES('dev','t','Development'),('qa','t','Quality')`); e != nil {
 		t.Fatal(e)
 	}
@@ -82,7 +82,7 @@ func TestTeamGrantSourcesAndRevocation(t *testing.T) {
 	}
 }
 func TestRoleMigrationPreservesAssignments(t *testing.T) {
-	f := setupTask(t)
+	f := setupProject(t)
 	// Reconstruct the actual pre-team schema, then run the production migrator twice.
 	_, err := f.a.DB.Exec(f.ctx, `DROP TABLE team_grants,team_memberships,direct_grants; DELETE FROM schema_versions WHERE version=5; ALTER TABLE memberships ADD COLUMN team_id text; INSERT INTO teams VALUES('old','t','Old team');UPDATE memberships SET team_id='old' WHERE id='mm'`)
 	if err != nil {

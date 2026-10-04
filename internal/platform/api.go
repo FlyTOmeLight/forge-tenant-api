@@ -24,7 +24,8 @@ func (a *App) Handler() http.Handler {
 		slog.Error("HTTP handler panic", "route", c.FullPath())
 		c.AbortWithStatusJSON(500, Object{"error": Object{"code": "INTERNAL_ERROR", "message": "服务暂不可用"}})
 	}))
-	a.taskRoutes(m)
+	route(m, "POST", "/internal/v1/session/check", a.service(a.checkSession))
+	route(m, "POST", "/internal/v1/projects/resolve", a.service(a.resolveProject))
 	route(m, "GET", "/healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()

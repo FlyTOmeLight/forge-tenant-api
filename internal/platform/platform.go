@@ -118,9 +118,6 @@ func (a *App) Migrate(ctx context.Context) error {
 	if _, e = tx.Exec(ctx, schema); e != nil {
 		return e
 	}
-	if _, e = tx.Exec(ctx, taskSchema); e != nil {
-		return e
-	}
 	if _, e = tx.Exec(ctx, roleSchema); e != nil {
 		return e
 	}

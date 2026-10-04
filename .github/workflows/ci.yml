@@ -25,11 +25,10 @@ jobs:
           cache: true
       - run: test -z "$(gofmt -l cmd internal)"
       - run: go test -tags=nomsgpack -race -count=1 ./...
-      - run: python3 -m unittest discover -s scripts/task-executor -p "test_*.py"
       - run: go vet -tags=nomsgpack ./...
       - run: go build -tags=nomsgpack ./cmd/forge
       - uses: azure/setup-helm@v4.3.0
         with:
           version: v3.17.3
-      - run: helm lint charts/forge-tenant && helm lint charts/forge-task-executor
+      - run: helm lint charts/forge-tenant
       - run: docker build -t forge-tenant-api:ci .

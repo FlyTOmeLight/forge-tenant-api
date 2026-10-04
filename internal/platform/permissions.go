@@ -24,7 +24,7 @@ func tenantPermissions(admin, active bool) Object {
 }
 func (a *App) projectPeople(w http.ResponseWriter, r *http.Request, u User) {
 	tid, pid := r.PathValue("tid"), r.PathValue("pid")
-	level, e := a.taskRead(r, u)
+	level, e := a.projectRead(r, u)
 	if e != nil {
 		fail(w, e)
 		return
@@ -80,4 +80,16 @@ func grantRole(level int) string {
 	default:
 		return "none"
 	}
+}
+
+func (a *App) projectRead(r *http.Request, u User) (int, error) {
+	v, e := a.access(r.Context(), u.ID, r.PathValue("tid"), r.PathValue("pid"))
+	level, _ := v["level"].(int)
+	if e != nil {
+		return 0, e
+	}
+	if level < 20 {
+		return 0, problem(404, "NOT_FOUND", "项目不存在或无代码访问权限")
+	}
+	return level, nil
 }

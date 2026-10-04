@@ -25,9 +25,6 @@ func (a *App) RunWorker(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-tick.C:
-			if e := a.expireTaskLeases(ctx); e != nil && ctx.Err() == nil {
-				slog.Error("task lease check failed", "error", e.Error())
-			}
 			if e := a.runNext(ctx); e != nil && ctx.Err() == nil {
 				slog.Error("sync worker error", "error", e.Error())
 			}
