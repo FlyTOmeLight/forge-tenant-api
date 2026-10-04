@@ -49,13 +49,15 @@ func (a *App) Handler() http.Handler {
 		JSON(w, 200, Object{"ok": true})
 	}))
 	route(m, "GET", "/api/v1/me", a.authorized(a.me))
-	route(m, "GET", "/api/v1/users", a.authorized(a.listUsers))
+	route(m, "GET", "/api/v1/platform/users", a.authorized(a.listUsers))
+	route(m, "GET", "/api/v1/platform/tenants", a.authorized(a.listPlatformTenants))
+	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/people", a.authorized(a.projectPeople))
 	route(m, "GET", "/api/v1/tenants", a.authorized(a.listTenants))
 	route(m, "GET", "/api/v1/tenants/:tid", a.authorized(a.snapshot))
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/grant-candidates", a.authorized(a.grantCandidates))
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/access", a.authorized(a.selfAccess))
-	route(m, "POST", "/api/v1/tenants", a.authorized(a.mutate("create_tenant", a.createTenant)))
-	route(m, "PATCH", "/api/v1/tenants/:tid", a.authorized(a.mutate("update_tenant", a.updateTenant)))
+	route(m, "POST", "/api/v1/platform/tenants", a.authorized(a.mutate("create_tenant", a.createTenant)))
+	route(m, "PATCH", "/api/v1/platform/tenants/:tid", a.authorized(a.mutate("update_tenant", a.updateTenant)))
 	route(m, "POST", "/api/v1/tenants/:tid/members", a.authorized(a.mutate("invite_member", a.addMember)))
 	route(m, "PATCH", "/api/v1/tenants/:tid/members/:mid", a.authorized(a.mutate("update_member", a.updateMember)))
 	route(m, "DELETE", "/api/v1/tenants/:tid/members/:mid", a.authorized(a.mutate("remove_member", a.removeMember)))
@@ -67,7 +69,6 @@ func (a *App) Handler() http.Handler {
 	route(m, "POST", "/api/v1/tenants/:tid/operations/:oid/retry", a.authorized(a.mutate("retry_sync", a.retryOperation)))
 	route(m, "POST", "/api/v1/invitations/inspect", a.invitationInfo)
 	route(m, "POST", "/api/v1/invitations/accept", a.acceptInvitation)
-	route(m, "GET", "/api/v1/connection", a.authorized(a.connection))
 	route(m, "POST", "/internal/v1/access/check", a.service(a.checkAccess))
 	route(m, "GET", "/internal/v1/access/events", a.service(a.accessEvents))
 	m.NoRoute(func(c *gin.Context) {
@@ -90,14 +91,14 @@ func (a *App) me(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, e)
 		return
 	}
-	JSON(w, 200, Object{"user": u, "csrf_token": csrf})
+	JSON(w, 200, Object{"user": u, "csrf_token": csrf, "permissions": Object{"managePlatform": u.Operator}})
 }
 func (a *App) listUsers(w http.ResponseWriter, r *http.Request, u User) {
 	if !u.Operator {
 		fail(w, problem(403, "FORBIDDEN", "需要平台运营权限"))
 		return
 	}
-	rows, e := collect(r.Context(), a.DB, `SELECT id,name,email,status,operator,gitlab_id FROM users ORDER BY created_at LIMIT 200`)
+	rows, e := collect(r.Context(), a.DB, `SELECT id,name,email,status,operator,gitlab_id FROM users WHERE status='active' ORDER BY created_at LIMIT 200`)
 	if e != nil {
 		fail(w, e)
 		return
@@ -105,7 +106,7 @@ func (a *App) listUsers(w http.ResponseWriter, r *http.Request, u User) {
 	JSON(w, 200, Object{"items": rows})
 }
 func (a *App) listTenants(w http.ResponseWriter, r *http.Request, u User) {
-	rows, e := collect(r.Context(), a.DB, `SELECT t.*, (SELECT count(*) FROM memberships m WHERE m.tenant_id=t.id AND m.status<>'removed') AS member_count,(SELECT count(*) FROM projects p WHERE p.tenant_id=t.id) AS project_count,coalesce((SELECT status FROM operations o WHERE o.tenant_id=t.id AND o.version=t.version),'pending') AS sync_status FROM tenants t WHERE $2 OR EXISTS(SELECT 1 FROM memberships m WHERE m.tenant_id=t.id AND m.user_id=$1 AND m.status='active') ORDER BY t.created_at DESC LIMIT 200`, u.ID, u.Operator)
+	rows, e := collect(r.Context(), a.DB, `SELECT t.*, (SELECT count(*) FROM memberships m WHERE m.tenant_id=t.id AND m.status<>'removed') AS member_count,(SELECT count(*) FROM projects p WHERE p.tenant_id=t.id) AS project_count,coalesce((SELECT status FROM operations o WHERE o.tenant_id=t.id AND o.version=t.version),'pending') AS sync_status FROM tenants t WHERE EXISTS(SELECT 1 FROM memberships m WHERE m.tenant_id=t.id AND m.user_id=$1 AND m.status='active') ORDER BY t.created_at DESC LIMIT 200`, u.ID)
 	if e != nil {
 		fail(w, e)
 		return
@@ -115,9 +116,6 @@ func (a *App) listTenants(w http.ResponseWriter, r *http.Request, u User) {
 func canManage(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, u User, tid string) (bool, error) {
-	if u.Operator {
-		return true, nil
-	}
 	var ok bool
 	e := db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE tenant_id=$1 AND user_id=$2 AND role='admin' AND status='active')`, tid, u.ID).Scan(&ok)
 	return ok, e
@@ -139,14 +137,14 @@ func (a *App) snapshot(w http.ResponseWriter, r *http.Request, u User) {
 		fail(w, problem(404, "NOT_FOUND", "企业不存在或不可访问"))
 		return
 	}
-	result := Object{"tenant": ts[0], "can_manage": admin}
+	result := Object{"tenant": ts[0], "permissions": tenantPermissions(admin, ts[0]["status"] == "active"), "teams": []Object{}, "operations": []Object{}, "audit": []Object{}}
 	queries := []struct {
 		name, sql string
 		args      []any
 	}{
 		{"members", `SELECT m.*,u.name,u.email,u.status AS user_status,u.gitlab_id,tm.name AS team_name FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN teams tm ON tm.id=m.team_id WHERE m.tenant_id=$1 AND m.status<>'removed' AND ($2 OR m.user_id=$3) ORDER BY u.name LIMIT 500`, []any{tid, admin, u.ID}},
-		{"projects", `SELECT p.* FROM projects p WHERE p.tenant_id=$1 AND ($2 OR EXISTS(SELECT 1 FROM grants g JOIN memberships m ON m.id=g.membership_id WHERE g.project_id=p.id AND m.user_id=$3 AND m.status='active' AND g.desired_level>0 AND g.effective_level>0)) ORDER BY p.name LIMIT 500`, []any{tid, admin, u.ID}},
-		{"grants", `SELECT g.*,u.name,u.email,m.status AS member_status FROM grants g JOIN memberships m ON m.id=g.membership_id JOIN users u ON u.id=m.user_id WHERE g.tenant_id=$1 AND ($2 OR m.user_id=$3 OR EXISTS(SELECT 1 FROM grants own JOIN memberships om ON om.id=own.membership_id WHERE own.project_id=g.project_id AND om.user_id=$3 AND om.status='active' AND own.desired_level=40 AND own.effective_level=40)) ORDER BY g.project_id,u.name LIMIT 1000`, []any{tid, admin, u.ID}},
+		{"projects", `SELECT p.* FROM projects p WHERE p.tenant_id=$1 AND ($2 OR EXISTS(SELECT 1 FROM grants g JOIN memberships m ON m.id=g.membership_id WHERE g.project_id=p.id AND m.user_id=$3 AND m.status='active' AND least(g.desired_level,g.observed_level,g.effective_level)>=20)) ORDER BY p.name LIMIT 500`, []any{tid, admin, u.ID}},
+		{"grants", `SELECT g.*,u.name,u.email,m.status AS member_status,u.status AS user_status FROM grants g JOIN memberships m ON m.id=g.membership_id JOIN users u ON u.id=m.user_id WHERE g.tenant_id=$1 AND ($2 OR m.user_id=$3 OR EXISTS(SELECT 1 FROM grants own JOIN memberships om ON om.id=own.membership_id WHERE own.project_id=g.project_id AND om.user_id=$3 AND om.status='active' AND least(own.desired_level,own.observed_level,own.effective_level)>=40)) ORDER BY g.project_id,u.name LIMIT 1000`, []any{tid, admin, u.ID}},
 	}
 	if admin {
 		queries = append(queries, struct {
@@ -166,21 +164,31 @@ func (a *App) snapshot(w http.ResponseWriter, r *http.Request, u User) {
 			fail(w, e)
 			return
 		}
+		if q.name == "projects" {
+			for _, p := range rows {
+				access, err := a.access(ctx, u.ID, tid, p["id"].(string))
+				if err != nil {
+					fail(w, err)
+					return
+				}
+				level, _ := access["level"].(int)
+				p["permissions"] = projectPermissions(level, admin, ts[0]["status"] == "active")
+			}
+		}
+		if q.name == "grants" {
+			for _, g := range rows {
+				g["desired_role"] = grantRole(grantLevel(g["desired_level"]))
+				g["observed_role"] = grantRole(grantLevel(g["observed_level"]))
+				level := min(grantLevel(g["desired_level"]), grantLevel(g["observed_level"]), grantLevel(g["effective_level"]))
+				if ts[0]["status"] != "active" || g["member_status"] != "active" || g["user_status"] != "active" {
+					level = 0
+				}
+				g["effective_role"] = grantRole(level)
+			}
+		}
 		result[q.name] = rows
 	}
 	JSON(w, 200, result)
-}
-func (a *App) connection(w http.ResponseWriter, r *http.Request, u User) {
-	if !u.Operator {
-		fail(w, problem(403, "FORBIDDEN", "需要平台运营权限"))
-		return
-	}
-	v, e := a.GitLab.Version(r.Context())
-	if e != nil {
-		JSON(w, 200, Object{"connected": false, "error": "GitLab 接入不可用，请检查配置"})
-		return
-	}
-	JSON(w, 200, Object{"connected": true, "version": v["version"], "enterprise": v["enterprise"], "url": a.Config.GitLabURL, "organization": a.Config.Organization})
 }
 func (a *App) access(ctx context.Context, uid, tid, pid string) (Object, error) {
 	var desired, observed, effective int
@@ -268,13 +276,7 @@ func mustReadLimited(r io.Reader) []byte {
 func (a *App) grantCandidates(w http.ResponseWriter, r *http.Request, u User) {
 	ctx := r.Context()
 	tid, pid := r.PathValue("tid"), r.PathValue("pid")
-	admin, e := canManage(ctx, a.DB, u, tid)
-	if e != nil {
-		fail(w, e)
-		return
-	}
-	var allowed bool
-	e = a.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM projects p JOIN tenants t ON t.id=p.tenant_id WHERE p.tenant_id=$1 AND p.id=$2 AND ($3 OR (t.status='active' AND EXISTS(SELECT 1 FROM grants g JOIN memberships m ON m.id=g.membership_id WHERE g.project_id=p.id AND m.user_id=$4 AND m.status='active' AND g.desired_level=40 AND g.effective_level=40))))`, tid, pid, admin, u.ID).Scan(&allowed)
+	allowed, e := grantManager(ctx, a.DB, u, tid, pid)
 	if e != nil {
 		fail(w, e)
 		return

@@ -28,7 +28,7 @@ GitLab 行级评论保留文件、行号、commit 和讨论上下文。同步不
 
 | 方法与路径 | 行为 |
 | --- | --- |
-| GET `/api/v1/coding/connections` | 实际 GitLab、模型探测与当前会话身份接入状态 |
+| GET `/api/v1/platform/connections` | 实际 GitLab、模型探测与当前会话身份接入状态 |
 | GET / PUT `/api/v1/tenants/{tid}/projects/{pid}/coding-settings` | 查看 / 版本控制更新项目配置 |
 | POST 同上 `/check` | 检查真实分支与模型存在，记录通过版本 |
 | GET / POST `/api/v1/tenants/{tid}/projects/{pid}/tasks` | 查询任务 / 关联已有 MR |

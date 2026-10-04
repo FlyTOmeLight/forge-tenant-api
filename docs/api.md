@@ -6,12 +6,13 @@
 
 | 方法与路径 | 行为与权限 |
 | --- | --- |
-| `GET /api/v1/me` | 当前激活身份、CSRF token |
-| `GET /api/v1/tenants` | 当前用户可见企业；运营可见全部 |
-| `POST /api/v1/tenants` | 运营创建企业；body: name, slug, admin_user_id（可省略，使用当前运营） |
+| `GET /api/v1/me` | 当前激活身份、CSRF token、`permissions.managePlatform` |
+| `GET /api/v1/tenants` | 当前用户以有效成员身份加入的租户 |
+| `GET /api/v1/platform/tenants` | 平台管理员查询全部租户元数据 |
+| `POST /api/v1/platform/tenants` | 平台管理员创建租户；body: name, slug, admin_user_id（必填，明确指定首位管理员） |
 | `GET /api/v1/tenants/{tid}` | 企业快照；后端过滤成员、项目、授权、操作和审计范围 |
-| `PATCH /api/v1/tenants/{tid}` | 运营设置 status=active / suspended |
-| `GET /api/v1/users` | 运营查询已纳入平台的统一账号 |
+| `PATCH /api/v1/platform/tenants/{tid}` | 运营设置 status=active / suspended |
+| `GET /api/v1/platform/users` | 运营查询已纳入平台的统一账号 |
 | `POST /api/v1/tenants/{tid}/members` | 企业管理员邀请成员；name, email, role=admin / member |
 | `PATCH /api/v1/tenants/{tid}/members/{mid}` | 修改 role 和 team_id；保护最后一位有效管理员 |
 | `DELETE /api/v1/tenants/{tid}/members/{mid}` | 立即撤销企业访问，并安排项目撤权；保留统一账号 |
@@ -25,10 +26,23 @@
 | `POST /api/v1/tenants/{tid}/operations/{oid}/retry` | 企业管理员对当前 failed / conflict 目标发起新版本重试 |
 | `POST /api/v1/invitations/inspect` | token 检查；只接受同源请求 |
 | `POST /api/v1/invitations/accept` | token, password（仅新账号）；已有账号必须登录匹配身份 |
-| `GET /api/v1/connection` | 运营检查 GitLab 接入；不返回管理凭证 |
+| `GET /api/v1/platform/connections` | 平台管理员检查 GitLab、模型和身份接入；不返回管理凭证 |
 | `POST /auth/logout` | 删除服务端会话并清除 Cookie |
 
 现阶段操作和审计通过企业快照返回，设计稿中的独立列表端点尚未拆出。设计稿是目标设计，本文件记录当前可调用接口。
+
+## 控制台权限边界
+
+平台管理员只管理租户生命周期和全局连接。进入租户工作区必须有有效成员身份。创建租户不会自动给操作者增加成员身份，只有 `admin_user_id` 指定的账号成为首位管理员。已有成员关系不变。
+
+租户管理员管理成员、团队和项目授权；读取代码、创建任务、配置执行仍需有效项目授权。项目管理员只管理所属项目的成员和执行配置。任务操作还校验负责人或指定审查者资格。
+
+- 快照 `permissions`：`manageMembers`、`manageProjects`、`viewSettings`、`viewAudit`、`viewSync`。
+- 每个项目的 `permissions`：`viewProject`、`readCode`、`createTask`、`manageMembers`、`configureExecution`。
+- `GET /api/v1/tenants/{tid}/projects/{pid}/people`：有项目读取权限者查询同项目有效协作者。返回 `id`、`name`、`canReview`、`canOwn`；仅用于审查者、负责人选择，不授予租户通讯录权限。
+- 授权条目提供 `desired_role`、`observed_role`、`effective_role` 供展示。前端按命名能力显示操作，后端每次请求重新鉴权。
+
+停用租户后禁止组织写操作和代码访问，租户管理员仍可查看设置、同步和审计。重新启用由平台管理员操作。
 
 ## 授权字段
 
@@ -61,7 +75,7 @@
 
 ## 项目执行配置与新问题任务
 
-`GET /api/v1/coding/connections` 返回 GitLab 与模型探测结果及当前会话的身份接入信息。
+`GET /api/v1/platform/connections` 返回 GitLab 与模型探测结果及当前会话的身份接入信息。
 
 项目路径 `/api/v1/tenants/{tid}/projects/{pid}` 下新增：
 

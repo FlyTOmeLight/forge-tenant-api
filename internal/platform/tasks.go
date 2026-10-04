@@ -68,7 +68,7 @@ func (a *App) taskRoutes(m *gin.Engine) {
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/coding-settings", a.authorized(a.getCodingSettings))
 	route(m, "PUT", "/api/v1/tenants/:tid/projects/:pid/coding-settings", a.authorized(a.saveCodingSettings))
 	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/coding-settings/check", a.authorized(a.checkCodingSettings))
-	route(m, "GET", "/api/v1/coding/connections", a.authorized(a.codingConnections))
+	route(m, "GET", "/api/v1/platform/connections", a.authorized(a.codingConnections))
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/tasks/:task", a.authorized(a.getTask))
 	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/tasks/:task/actions", a.authorized(a.taskAction))
 	route(m, "POST", "/api/v1/tenants/:tid/projects/:pid/tasks/:task/sync", a.authorized(a.syncTask))

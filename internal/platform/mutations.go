@@ -54,32 +54,32 @@ func (a *App) mutate(action string, fn mutation) func(http.ResponseWriter, *http
 			fail(w, e)
 			return
 		}
-		var admin bool
-		if tid != "" {
-			admin, e = canManage(ctx, tx, u, tid)
+		if action == "create_tenant" || action == "update_tenant" {
+			if !u.Operator {
+				fail(w, problem(403, "FORBIDDEN", "需要平台管理权限"))
+				return
+			}
+		} else {
+			var allowed bool
+			if action == "set_grant" || action == "revoke_grant" {
+				allowed, e = grantManager(ctx, tx, u, tid, r.PathValue("pid"))
+			} else {
+				allowed, e = canManage(ctx, tx, u, tid)
+			}
 			if e != nil {
 				fail(w, e)
 				return
 			}
-			if !admin && action != "set_grant" && action != "revoke_grant" {
-				fail(w, problem(404, "NOT_FOUND", "企业不存在或无管理权限"))
+			if !allowed {
+				fail(w, problem(404, "NOT_FOUND", "资源不存在或无管理权限"))
 				return
 			}
-			if !admin {
-				var ok bool
-				e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM grants g JOIN memberships m ON m.id=g.membership_id JOIN tenants t ON t.id=m.tenant_id WHERE g.tenant_id=$1 AND g.project_id=$2 AND m.user_id=$3 AND m.status='active' AND t.status='active' AND g.desired_level=40 AND g.effective_level>=40)`, tid, r.PathValue("pid"), u.ID).Scan(&ok)
-				if e != nil {
+			if action != "retry_sync" {
+				if e = requireActive(ctx, tx, tid); e != nil {
 					fail(w, e)
 					return
 				}
-				if !ok {
-					fail(w, problem(404, "NOT_FOUND", "项目不存在或无授权管理权限"))
-					return
-				}
 			}
-		} else if !u.Operator {
-			fail(w, problem(403, "FORBIDDEN", "仅平台运营可创建企业"))
-			return
 		}
 		route := r.Method + " " + r.URL.Path
 		digest := Hash(string(raw) + "|" + r.Header.Get("If-Match"))
@@ -194,7 +194,7 @@ func enqueue(ctx context.Context, tx pgx.Tx, tid string) (string, int64, error) 
 func (a *App) createTenant(ctx context.Context, tx pgx.Tx, u User, r *http.Request, b Object) (Object, error) {
 	name, slug, admin := str(b, "name"), str(b, "slug"), str(b, "admin_user_id")
 	if admin == "" {
-		admin = u.ID
+		return nil, problem(422, "ADMIN_REQUIRED", "请明确指定首位租户管理员")
 	}
 	if !validName(name) || !regexp.MustCompile(`^[a-z][a-z0-9-]{1,39}$`).MatchString(slug) {
 		return nil, problem(422, "INVALID_TENANT", "企业名称必填，标识须为 2–40 位小写字母、数字或连字符")

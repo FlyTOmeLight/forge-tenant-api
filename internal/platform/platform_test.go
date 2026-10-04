@@ -100,7 +100,7 @@ func (f *fixture) call(t *testing.T, token, method, path string, b any, v int64,
 }
 func (f *fixture) tenant(t *testing.T) (string, int64) {
 	t.Helper()
-	code, b := f.call(t, f.operator, "POST", "/api/v1/tenants", Object{"name": "测试企业", "slug": "tenant-" + Token()[:8]}, 0, "")
+	code, b := f.call(t, f.operator, "POST", "/api/v1/platform/tenants", Object{"admin_user_id": "operator", "name": "测试企业", "slug": "tenant-" + Token()[:8]}, 0, "")
 	if code != 202 {
 		t.Fatalf("create status %d: %v", code, b)
 	}
@@ -109,16 +109,16 @@ func (f *fixture) tenant(t *testing.T) (string, int64) {
 func TestIdempotencyAndTenantIsolation(t *testing.T) {
 	f := setup(t)
 	key := Token()
-	body := Object{"name": "Example", "slug": "example"}
-	code, first := f.call(t, f.operator, "POST", "/api/v1/tenants", body, 0, key)
+	body := Object{"admin_user_id": "operator", "name": "Example", "slug": "example"}
+	code, first := f.call(t, f.operator, "POST", "/api/v1/platform/tenants", body, 0, key)
 	if code != 202 {
 		t.Fatal(code, first)
 	}
-	code, second := f.call(t, f.operator, "POST", "/api/v1/tenants", body, 0, key)
+	code, second := f.call(t, f.operator, "POST", "/api/v1/platform/tenants", body, 0, key)
 	if code != 202 || first["tenant_id"] != second["tenant_id"] || first["operation_id"] != second["operation_id"] {
 		t.Fatal("idempotency did not preserve result")
 	}
-	code, _ = f.call(t, f.operator, "POST", "/api/v1/tenants", Object{"name": "Other", "slug": "other"}, 0, key)
+	code, _ = f.call(t, f.operator, "POST", "/api/v1/platform/tenants", Object{"admin_user_id": "operator", "name": "Other", "slug": "other"}, 0, key)
 	if code != 409 {
 		t.Fatal("reused key must reject different content", code)
 	}
@@ -246,7 +246,7 @@ func TestConcurrentAdminRemovalPreservesLastAdmin(t *testing.T) {
 	for c := range codes {
 		if c == 202 {
 			success++
-		} else if c == 412 {
+		} else if c == 412 || c == 404 {
 			conflict++
 		} else {
 			t.Fatal("unexpected response", c)
@@ -259,14 +259,18 @@ func TestConcurrentAdminRemovalPreservesLastAdmin(t *testing.T) {
 	if e = f.a.DB.QueryRow(f.ctx, `SELECT id FROM memberships WHERE tenant_id=$1 AND status='active' AND role='admin'`, tid).Scan(&remaining); e != nil {
 		t.Fatal(e)
 	}
-	code, _ := f.call(t, f.operator, "DELETE", "/api/v1/tenants/"+tid+"/members/"+remaining, nil, v+1, "")
+	session := f.operator
+	if remaining == "second" {
+		session = f.member
+	}
+	code, _ := f.call(t, session, "DELETE", "/api/v1/tenants/"+tid+"/members/"+remaining, nil, v+1, "")
 	if code != 409 {
 		t.Fatal("last admin removed", code)
 	}
 }
 func TestCSRFAndDisabledSession(t *testing.T) {
 	f := setup(t)
-	r := httptest.NewRequest("POST", "/api/v1/tenants", strings.NewReader(`{"name":"bad","slug":"bad"}`))
+	r := httptest.NewRequest("POST", "/api/v1/platform/tenants", strings.NewReader(`{"name":"bad","slug":"bad"}`))
 	r.AddCookie(&http.Cookie{Name: "forge_session", Value: f.operator})
 	w := httptest.NewRecorder()
 	f.a.Handler().ServeHTTP(w, r)

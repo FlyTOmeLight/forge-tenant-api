@@ -85,7 +85,13 @@ func (a *App) getCodingSettings(w http.ResponseWriter, r *http.Request, u User) 
 		fail(w, e)
 		return
 	}
-	JSON(w, 200, Object{"settings": c, "branches": branches, "executors": executors, "canManage": level >= 40})
+	models := []string{}
+	if level >= 40 {
+		if names, err := a.modelNames(r.Context()); err == nil {
+			models = names
+		}
+	}
+	JSON(w, 200, Object{"settings": c, "branches": branches, "executors": executors, "models": models, "permissions": projectPermissions(level, false, true)})
 }
 func (a *App) saveCodingSettings(w http.ResponseWriter, r *http.Request, u User) {
 	level, e := a.taskRead(r, u)
@@ -230,6 +236,10 @@ func (a *App) checkCodingSettings(w http.ResponseWriter, r *http.Request, u User
 	JSON(w, 200, Object{"settings": c, "baseHead": b.Commit.ID, "message": "仓库与模型连接通过；必过检查会在每轮实际执行"})
 }
 func (a *App) codingConnections(w http.ResponseWriter, r *http.Request, u User) {
+	if !u.Operator {
+		fail(w, problem(403, "FORBIDDEN", "需要平台管理权限"))
+		return
+	}
 	models, e := a.modelNames(r.Context())
 	modelStatus := "available"
 	if e != nil {
