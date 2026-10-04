@@ -23,6 +23,9 @@ func setupTask(t *testing.T) *taskFixture {
 	if e != nil {
 		t.Fatal(e)
 	}
+	if _, err := f.a.DB.Exec(f.ctx, `INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0 ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
 	config := CodingSettings{Version: 1, BaseBranch: "master", Model: "local-model", AllowedPaths: []string{"src/"}, Checks: []string{"go test ./..."}, RepairLimit: 3, TimeoutMinutes: 30}
 	rawConfig, _ := json.Marshal(config)
 	if _, e = f.a.DB.Exec(f.ctx, `INSERT INTO coding_project_settings(tenant_id,project_id,version,settings,checked_at) VALUES('t','p',1,$1,now())`, rawConfig); e != nil {
@@ -421,7 +424,7 @@ func TestTaskSchemaUpgradePreservesAssociatedMR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.a.DB.Exec(f.ctx, `DROP TABLE coding_events,coding_feedback,coding_runs,coding_tasks,coding_project_settings,coding_executors; DELETE FROM schema_versions WHERE version>=3`); err != nil {
+	if _, err = f.a.DB.Exec(f.ctx, `DROP TABLE coding_events,coding_feedback,coding_runs,coding_tasks,coding_project_settings,coding_executors; DELETE FROM schema_versions WHERE version BETWEEN 3 AND 4`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.a.DB.Exec(f.ctx, string(legacy)); err != nil {

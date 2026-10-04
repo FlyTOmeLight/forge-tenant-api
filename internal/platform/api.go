@@ -53,6 +53,14 @@ func (a *App) Handler() http.Handler {
 	route(m, "GET", "/api/v1/platform/tenants", a.authorized(a.listPlatformTenants))
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/people", a.authorized(a.projectPeople))
 	route(m, "GET", "/api/v1/tenants", a.authorized(a.listTenants))
+	route(m, "GET", "/api/v1/roles", a.authorized(a.roles))
+	route(m, "GET", "/api/v1/tenants/:tid/permissions/me", a.authorized(a.memberPermissions))
+	route(m, "GET", "/api/v1/tenants/:tid/members/:mid/permissions", a.authorized(a.memberPermissions))
+	route(m, "PUT", "/api/v1/tenants/:tid/teams/:team/members/:mid", a.authorized(a.mutate("add_team_member", a.setTeamMember)))
+	route(m, "DELETE", "/api/v1/tenants/:tid/teams/:team/members/:mid", a.authorized(a.mutate("remove_team_member", a.setTeamMember)))
+	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/team-grants", a.authorized(a.projectTeamGrants))
+	route(m, "PUT", "/api/v1/tenants/:tid/projects/:pid/team-grants/:team", a.authorized(a.mutate("set_team_grant", a.setTeamGrant)))
+	route(m, "DELETE", "/api/v1/tenants/:tid/projects/:pid/team-grants/:team", a.authorized(a.mutate("revoke_team_grant", a.setTeamGrant)))
 	route(m, "GET", "/api/v1/tenants/:tid", a.authorized(a.snapshot))
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/grant-candidates", a.authorized(a.grantCandidates))
 	route(m, "GET", "/api/v1/tenants/:tid/projects/:pid/access", a.authorized(a.selfAccess))
@@ -142,15 +150,16 @@ func (a *App) snapshot(w http.ResponseWriter, r *http.Request, u User) {
 		name, sql string
 		args      []any
 	}{
-		{"members", `SELECT m.*,u.name,u.email,u.status AS user_status,u.gitlab_id,tm.name AS team_name FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN teams tm ON tm.id=m.team_id WHERE m.tenant_id=$1 AND m.status<>'removed' AND ($2 OR m.user_id=$3) ORDER BY u.name LIMIT 500`, []any{tid, admin, u.ID}},
+		{"members", `SELECT m.*,u.name,u.email,u.status AS user_status,u.gitlab_id,coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.name) ORDER BY t.name) FROM team_memberships tm JOIN teams t ON t.id=tm.team_id WHERE tm.membership_id=m.id),'[]'::jsonb) AS teams FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=$1 AND m.status<>'removed' AND ($2 OR m.user_id=$3) ORDER BY u.name LIMIT 500`, []any{tid, admin, u.ID}},
 		{"projects", `SELECT p.* FROM projects p WHERE p.tenant_id=$1 AND ($2 OR EXISTS(SELECT 1 FROM grants g JOIN memberships m ON m.id=g.membership_id WHERE g.project_id=p.id AND m.user_id=$3 AND m.status='active' AND least(g.desired_level,g.observed_level,g.effective_level)>=20)) ORDER BY p.name LIMIT 500`, []any{tid, admin, u.ID}},
-		{"grants", `SELECT g.*,u.name,u.email,m.status AS member_status,u.status AS user_status FROM grants g JOIN memberships m ON m.id=g.membership_id JOIN users u ON u.id=m.user_id WHERE g.tenant_id=$1 AND ($2 OR m.user_id=$3 OR EXISTS(SELECT 1 FROM grants own JOIN memberships om ON om.id=own.membership_id WHERE own.project_id=g.project_id AND om.user_id=$3 AND om.status='active' AND least(own.desired_level,own.observed_level,own.effective_level)>=40)) ORDER BY g.project_id,u.name LIMIT 1000`, []any{tid, admin, u.ID}},
+		{"grants", `SELECT g.*,coalesce(d.level,0) AS direct_level,
+ coalesce((SELECT jsonb_agg(jsonb_build_object('id',t.id,'name',t.name,'level',tg.level)) FROM team_grants tg JOIN teams t ON t.id=tg.team_id JOIN team_memberships tm ON tm.team_id=t.id WHERE tg.project_id=g.project_id AND tm.membership_id=g.membership_id),'[]'::jsonb) AS team_sources,u.name,u.email,m.status AS member_status,u.status AS user_status FROM grants g LEFT JOIN direct_grants d ON d.project_id=g.project_id AND d.membership_id=g.membership_id JOIN memberships m ON m.id=g.membership_id JOIN users u ON u.id=m.user_id WHERE g.tenant_id=$1 AND ($2 OR m.user_id=$3 OR EXISTS(SELECT 1 FROM grants own JOIN memberships om ON om.id=own.membership_id WHERE own.project_id=g.project_id AND om.user_id=$3 AND om.status='active' AND least(own.desired_level,own.observed_level,own.effective_level)>=40)) ORDER BY g.project_id,u.name LIMIT 1000`, []any{tid, admin, u.ID}},
 	}
 	if admin {
 		queries = append(queries, struct {
 			name, sql string
 			args      []any
-		}{"teams", `SELECT * FROM teams WHERE tenant_id=$1 ORDER BY name LIMIT 500`, []any{tid}}, struct {
+		}{"teams", `SELECT t.*,(SELECT count(*) FROM team_memberships tm JOIN memberships m ON m.id=tm.membership_id WHERE tm.team_id=t.id AND m.status='active') AS member_count FROM teams t WHERE tenant_id=$1 ORDER BY name LIMIT 500`, []any{tid}}, struct {
 			name, sql string
 			args      []any
 		}{"operations", `SELECT * FROM operations WHERE tenant_id=$1 ORDER BY version DESC LIMIT 100`, []any{tid}}, struct {
@@ -177,6 +186,20 @@ func (a *App) snapshot(w http.ResponseWriter, r *http.Request, u User) {
 		}
 		if q.name == "grants" {
 			for _, g := range rows {
+				g["direct_role"] = grantRole(grantLevel(g["direct_level"]))
+				sources := []Object{}
+				if g["direct_role"] != "none" {
+					sources = append(sources, Object{"kind": "direct", "id": g["membership_id"], "name": "直接分配", "role": g["direct_role"]})
+				}
+				if teams, ok := g["team_sources"].([]any); ok {
+					for _, v := range teams {
+						t := v.(map[string]any)
+						sources = append(sources, Object{"kind": "team", "id": t["id"], "name": t["name"], "role": grantRole(grantLevel(t["level"]))})
+					}
+				}
+				g["sources"] = sources
+				delete(g, "team_sources")
+				delete(g, "direct_level")
 				g["desired_role"] = grantRole(grantLevel(g["desired_level"]))
 				g["observed_role"] = grantRole(grantLevel(g["observed_level"]))
 				level := min(grantLevel(g["desired_level"]), grantLevel(g["observed_level"]), grantLevel(g["effective_level"]))

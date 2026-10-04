@@ -14,14 +14,14 @@
 | `PATCH /api/v1/platform/tenants/{tid}` | 运营设置 status=active / suspended |
 | `GET /api/v1/platform/users` | 运营查询已纳入平台的统一账号 |
 | `POST /api/v1/tenants/{tid}/members` | 企业管理员邀请成员；name, email, role=admin / member |
-| `PATCH /api/v1/tenants/{tid}/members/{mid}` | 修改 role 和 team_id；保护最后一位有效管理员 |
+| `PATCH /api/v1/tenants/{tid}/members/{mid}` | 修改租户 role；团队成员关系使用独立接口；保护最后一位有效管理员 |
 | `DELETE /api/v1/tenants/{tid}/members/{mid}` | 立即撤销企业访问，并安排项目撤权；保留统一账号 |
 | `POST /api/v1/tenants/{tid}/members/{mid}/invitation` | 重新邀请；使旧链接失效 |
-| `POST /api/v1/tenants/{tid}/teams` | 创建团队；name；不授予权限 |
+| `POST /api/v1/tenants/{tid}/teams` | 创建团队；name；随后可为团队分配项目角色 |
 | `POST /api/v1/tenants/{tid}/projects` | 企业管理员接入项目；name, path（根 Group 下后缀）, mode=create / bind |
 | `GET /api/v1/tenants/{tid}/projects/{pid}/grant-candidates` | 企业 / 该项目管理员查询可授权成员 |
-| `PUT /api/v1/tenants/{tid}/projects/{pid}/grants/{mid}` | 企业 / 该项目管理员设置 role=admin / developer / reviewer |
-| `DELETE /api/v1/tenants/{tid}/projects/{pid}/grants/{mid}` | 企业 / 该项目管理员撤销项目授权 |
+| `PUT /api/v1/tenants/{tid}/projects/{pid}/grants/{mid}` | 企业 / 该项目管理员设置个人直接角色 role=admin / developer / reviewer |
+| `DELETE /api/v1/tenants/{tid}/projects/{pid}/grants/{mid}` | 企业 / 该项目管理员撤销个人直接授权；团队授权保留 |
 | `GET /api/v1/tenants/{tid}/projects/{pid}/access` | 当前用户实际平台权限；没有授权时 allowed=false |
 | `POST /api/v1/tenants/{tid}/operations/{oid}/retry` | 企业管理员对当前 failed / conflict 目标发起新版本重试 |
 | `POST /api/v1/invitations/inspect` | token 检查；只接受同源请求 |
@@ -85,3 +85,25 @@
 - `POST /tasks/new`：需要项目写权限与已检查配置；以 `Idempotency-Key` 防重，创建 `mrIid=0` 的任务和排队轮次。必填问题、复现及验收条件，`reviewerIds` 支持多位具有读取权限的审查者。
 
 每轮 `config_snapshot` 固定当时配置。旧的 `POST /tasks` 仍可关联现有开放 MR；任务完成结果可携带新生成的 `mrIid` 与独立 Agent 判断。完整契约见 [coding-tasks.md](coding-tasks.md)。
+
+## 角色与多团队授权
+
+`GET /api/v1/roles` 返回固定角色目录：平台管理员、租户管理员、普通成员，以及项目管理员、开发者、审查者。每个条目包含 `id`、`scope`、`name`、`permissions` 和 `conditions`。当前不支持自定义角色。
+
+| 方法与路径 | 范围与行为 |
+| --- | --- |
+| `GET /api/v1/tenants/{tid}/permissions/me` | 有效租户成员查看自己的角色、团队、具体能力和项目授权来源；停用租户时仍可查看权限受限原因 |
+| `GET /api/v1/tenants/{tid}/members/{mid}/permissions` | 本人或租户管理员查看指定成员权限；项目管理员不能借此读取其他项目权限 |
+| `PUT /api/v1/tenants/{tid}/teams/{team}/members/{mid}` | 租户管理员将已激活成员加入团队；允许加入多个团队 |
+| `DELETE /api/v1/tenants/{tid}/teams/{team}/members/{mid}` | 租户管理员移出团队，只移除该团队带来的项目授权 |
+| `GET /api/v1/tenants/{tid}/projects/{pid}/team-grants` | 租户 / 项目管理员查询可分配团队、人数和已分配角色 |
+| `PUT /api/v1/tenants/{tid}/projects/{pid}/team-grants/{team}` | 租户 / 项目管理员为团队分配 role=admin / developer / reviewer |
+| `DELETE /api/v1/tenants/{tid}/projects/{pid}/team-grants/{team}` | 撤销该团队在此项目的角色；其他授权来源保留 |
+
+新增写接口沿用 CSRF、`Idempotency-Key`、租户 `If-Match`、审计和同步操作返回契约。团队和项目、成员必须属于同一租户。
+
+权限报告的 `projects[]` 包含 `desiredRole`、`effectiveRole`、`permissions`、`reason`、`sources`；每条来源包含 `kind=direct/team`、`id`、`name`、`role`。租户快照中的成员改为 `teams: [{id,name}]`，移除旧 `team_id` / `team_name` 字段；授权条目新增 `direct_role` 与 `sources`。个人授权写入响应使用 `direct_role`，聚合目标和实际能力从快照或权限报告读取。
+
+项目目标角色取所有直接授权和团队授权中的最高等级。降低目标时立即压低有效能力；提高目标时等待当前版本 GitLab 确认。GitLab 接收计算后的每人项目角色；团队在 Forge 内管理，不额外创建具有继承权限的 GitLab Group。
+
+数据库版本 5 引入 `direct_grants`、`team_memberships`、`team_grants`。原 `grants` 保存聚合目标与远端确认结果，执行器继续读取同一条有效权限链路。迁移把已有正向项目授权保存为直接来源，把旧团队字段转成团队成员关系，再删除旧字段。重复迁移不会恢复已撤销的来源。移出租户清除其直接来源和所有团队关系；重新邀请不会恢复旧授权。

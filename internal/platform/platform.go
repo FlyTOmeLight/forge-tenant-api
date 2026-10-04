@@ -30,6 +30,9 @@ import (
 //go:embed schema.sql
 var schema string
 
+//go:embed roles.sql
+var roleSchema string
+
 type App struct {
 	DB       *pgxpool.Pool
 	Config   config.Config
@@ -116,6 +119,9 @@ func (a *App) Migrate(ctx context.Context) error {
 		return e
 	}
 	if _, e = tx.Exec(ctx, taskSchema); e != nil {
+		return e
+	}
+	if _, e = tx.Exec(ctx, roleSchema); e != nil {
 		return e
 	}
 	return tx.Commit(ctx)

@@ -61,7 +61,7 @@ func (a *App) mutate(action string, fn mutation) func(http.ResponseWriter, *http
 			}
 		} else {
 			var allowed bool
-			if action == "set_grant" || action == "revoke_grant" {
+			if action == "set_grant" || action == "revoke_grant" || action == "set_team_grant" || action == "revoke_team_grant" {
 				allowed, e = grantManager(ctx, tx, u, tid, r.PathValue("pid"))
 			} else {
 				allowed, e = canManage(ctx, tx, u, tid)
@@ -287,7 +287,7 @@ func (a *App) addMember(ctx context.Context, tx pgx.Tx, u User, r *http.Request,
 			return nil, problem(409, "MEMBER_EXISTS", "此账号已在企业中，请使用重新邀请或成员设置")
 		}
 		mid = existing
-		_, e = tx.Exec(ctx, `UPDATE memberships SET status='invited',role=$2,team_id=NULL WHERE id=$1`, mid, role)
+		_, e = tx.Exec(ctx, `UPDATE memberships SET status='invited',role=$2 WHERE id=$1`, mid, role)
 	} else if errors.Is(e, pgx.ErrNoRows) {
 		_, e = tx.Exec(ctx, `INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES($1,$2,$3,$4,'invited')`, mid, tid, uid, role)
 	}
@@ -335,14 +335,14 @@ func (a *App) updateMember(ctx context.Context, tx pgx.Tx, u User, r *http.Reque
 		}
 		return nil, e
 	}
-	tag, e := tx.Exec(ctx, `UPDATE memberships SET role=$3,team_id=nullif($4,'') WHERE tenant_id=$1 AND id=$2`, tid, mid, role, str(b, "team_id"))
+	tag, e := tx.Exec(ctx, `UPDATE memberships SET role=$3 WHERE tenant_id=$1 AND id=$2`, tid, mid, role)
 	if e != nil {
 		return nil, e
 	}
 	if tag.RowsAffected() != 1 {
 		return nil, problem(404, "NOT_FOUND", "成员不存在")
 	}
-	return Object{"membership_id": mid, "before_role": before, "role": role, "team_id": str(b, "team_id")}, nil
+	return Object{"membership_id": mid, "before_role": before, "role": role}, nil
 }
 func (a *App) removeMember(ctx context.Context, tx pgx.Tx, u User, r *http.Request, b Object) (Object, error) {
 	tid, mid := r.PathValue("tid"), r.PathValue("mid")
@@ -352,7 +352,13 @@ func (a *App) removeMember(ctx context.Context, tx pgx.Tx, u User, r *http.Reque
 	if _, e := tx.Exec(ctx, `UPDATE memberships SET status='removed' WHERE tenant_id=$1 AND id=$2`, tid, mid); e != nil {
 		return nil, e
 	}
-	if _, e := tx.Exec(ctx, `UPDATE grants SET desired_level=0,effective_level=0 WHERE tenant_id=$1 AND membership_id=$2`, tid, mid); e != nil {
+	if _, e := tx.Exec(ctx, `DELETE FROM direct_grants WHERE tenant_id=$1 AND membership_id=$2`, tid, mid); e != nil {
+		return nil, e
+	}
+	if _, e := tx.Exec(ctx, `DELETE FROM team_memberships WHERE tenant_id=$1 AND membership_id=$2`, tid, mid); e != nil {
+		return nil, e
+	}
+	if e := recomputeGrants(ctx, tx, tid); e != nil {
 		return nil, e
 	}
 	_, e := tx.Exec(ctx, `UPDATE invitations SET consumed_at=now() WHERE membership_id=$1 AND consumed_at IS NULL`, mid)
@@ -420,13 +426,18 @@ func (a *App) setGrant(ctx context.Context, tx pgx.Tx, u User, r *http.Request, 
 	if !exists {
 		return nil, problem(404, "NOT_FOUND", "项目或已激活成员不存在")
 	}
-	var before int
-	e = tx.QueryRow(ctx, `SELECT desired_level FROM grants WHERE project_id=$1 AND membership_id=$2`, pid, mid).Scan(&before)
-	if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+	if r.Method == "DELETE" {
+		_, e = tx.Exec(ctx, `DELETE FROM direct_grants WHERE tenant_id=$1 AND project_id=$2 AND membership_id=$3`, tid, pid, mid)
+	} else {
+		_, e = tx.Exec(ctx, `INSERT INTO direct_grants VALUES($1,$2,$3,$4) ON CONFLICT(project_id,membership_id) DO UPDATE SET level=EXCLUDED.level`, tid, pid, mid, level)
+	}
+	if e != nil {
 		return nil, e
 	}
-	_, e = tx.Exec(ctx, `INSERT INTO grants(tenant_id,project_id,membership_id,desired_level) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,membership_id) DO UPDATE SET desired_level=EXCLUDED.desired_level,effective_level=LEAST(grants.effective_level,EXCLUDED.desired_level)`, tid, pid, mid, level)
-	return Object{"project_id": pid, "membership_id": mid, "before_level": before, "desired_level": level}, e
+	if e = recomputeGrants(ctx, tx, tid); e != nil {
+		return nil, e
+	}
+	return Object{"project_id": pid, "membership_id": mid, "direct_role": grantRole(level)}, nil
 }
 func (a *App) retryOperation(ctx context.Context, tx pgx.Tx, u User, r *http.Request, b Object) (Object, error) {
 	var ok bool

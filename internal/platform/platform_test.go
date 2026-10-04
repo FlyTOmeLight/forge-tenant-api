@@ -168,6 +168,9 @@ func TestAuthorizationIncreaseWaitsForCurrentConfirmation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	if _, err := f.a.DB.Exec(f.ctx, `INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0 ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
 	path := "/api/v1/tenants/" + tid + "/projects/p/grants/m"
 	code, b := f.call(t, f.operator, "PUT", path, Object{"role": "developer"}, v, "")
 	if code != 202 {
@@ -319,6 +322,9 @@ func TestProjectAdminCannotManageOtherProjectsOrEnterprise(t *testing.T) {
 	_, e = f.a.DB.Exec(f.ctx, `INSERT INTO grants(tenant_id,project_id,membership_id,desired_level,observed_level,effective_level) VALUES($1,'p','m',40,40,40)`, tid)
 	if e != nil {
 		t.Fatal(e)
+	}
+	if _, err := f.a.DB.Exec(f.ctx, `INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0 ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
 	}
 	code, b := f.call(t, f.member, "GET", "/api/v1/tenants/"+tid+"/projects/p/grant-candidates", nil, 0, "")
 	if code != 200 || len(b["items"].([]any)) != 3 {

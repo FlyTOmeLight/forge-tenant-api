@@ -116,6 +116,10 @@ func (a *App) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		fail(w, e)
 		return
 	}
+	if e = recomputeGrants(ctx, tx, tid); e != nil {
+		fail(w, e)
+		return
+	}
 	op, version, e := enqueue(ctx, tx, tid)
 	if e != nil {
 		fail(w, e)
