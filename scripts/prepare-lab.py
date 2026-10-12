@@ -3,9 +3,9 @@ import argparse, base64, json, os, pathlib, secrets, subprocess, time, urllib.er
 p=argparse.ArgumentParser()
 p.add_argument('--lab-config',required=True)
 p.add_argument('--kubectl',default='kubectl')
-p.add_argument('--namespace',default='forge-tenant')
-p.add_argument('--public-url',default='http://127.0.0.1:8383')
-p.add_argument('--oidc-client-id',default='forge-tenant-console')
+p.add_argument('--namespace',default='forge-tenant-split')
+p.add_argument('--public-url',default='http://127.0.0.1:8483')
+p.add_argument('--oidc-client-id',default='forge-tenant-split-console')
 a=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[1]
 local=root/'.local'; local.mkdir(mode=0o700,exist_ok=True);local.chmod(0o700)

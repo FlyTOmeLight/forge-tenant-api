@@ -13,7 +13,7 @@ internal/platform/  Gin 路由、认证、租户事务与 GitLab 身份权限同
 internal/remote/    Casdoor / GitLab 协议适配
 configs/            环境配置样例
 charts/forge-tenant/ API、Worker、PostgreSQL、可选接口 Ingress
-scripts/            联调准备、Helm 发布和试点执行器
+scripts/            联调准备与 Helm 发布
 docs/               API 与 Agent 集成契约
 ```
 
@@ -42,13 +42,13 @@ python3 scripts/prepare-lab.py --lab-config /path/to/infra.json --kubectl /path/
 FORGE_IMAGE_TAG=0.2.0 ./scripts/deploy-lab.sh
 ```
 
-后端 Helm release 仍为 `forge-tenant`，namespace 同名，以保持数据库 PVC、Service 和执行器调用地址。前端独立 release `forge-tenant-web`。浏览器入口通过前端 Service 提供：
+本机部署统一使用 namespace `forge-tenant-split`。后端 Helm release 为 `forge-tenant`，前端独立 release 为 `forge-tenant-web`。浏览器入口通过前端 Service 提供：
 
 ```sh
-kubectl --context orbstack -n forge-tenant port-forward service/forge-tenant-web 8383:80
+kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tenant-web 8483:80
 ```
 
-后端单独调试可把 `service/forge-tenant` 转发到 8484。`PUBLIC_URL` 始终指向浏览器看到的前端 origin（本机为 `http://127.0.0.1:8383`），OIDC 回调为该 origin 的 `/auth/callback`，认证跳转页面由 Vue 提供。正式环境应使用 TLS Ingress 和可被集群拉取的版本化镜像；内置单副本 PostgreSQL 用于本机验证，外部数据库可设置 `postgres.enabled=false`。
+后端单独调试可把 `service/forge-tenant` 转发到 8484。`PUBLIC_URL` 始终指向浏览器看到的前端 origin（本机部署为 `http://127.0.0.1:8483`），OIDC 回调为该 origin 的 `/auth/callback`，认证跳转页面由 Vue 提供。正式环境应使用 TLS Ingress 和可被集群拉取的版本化镜像；内置单副本 PostgreSQL 用于本机验证，外部数据库可设置 `postgres.enabled=false`。
 
 ## 已有业务契约
 
@@ -65,15 +65,15 @@ HTTP 契约见 [docs/api.md](docs/api.md)，访问控制接入见 [docs/agent-in
 
 ## 验证与仓库迁移
 
-浏览器 E2E 在前端仓库中，支持 `FORGE_API_ROOT` 指向本仓库。`.local/`、凭证、会话与测试产物不推送。原 `forge-tenant-platform` 保留为迁移源，新开发分别在两个独立仓库继续。
+浏览器 E2E 在前端仓库中，支持 `FORGE_API_ROOT` 指向本仓库。`.local/`、凭证、会话与测试产物不推送。租户、研发和 Agent 执行分别由独立仓库维护。
 
 本次实际执行的检查与限制见 [docs/verification.md](docs/verification.md)。
 
-## 本次独立验证环境
+## 当前本机环境
 
-为保留另一会话对原平台的并行修改，本轮使用 namespace `forge-tenant-split`、独立 PostgreSQL 和 OIDC client `forge-tenant-split-console`，浏览器入口为 `http://127.0.0.1:8483`。该环境中的企业和项目是验收数据；原 `forge-tenant` / 8383 及其数据未被切换或覆盖。
+当前使用 namespace `forge-tenant-split`、独立 PostgreSQL 和 OIDC client `forge-tenant-split-console`，浏览器入口为 `http://127.0.0.1:8483`。旧版一体化平台、旧 Python 执行器和 `forge-tenant` 命名空间已退役。历史数据库与源码保存在本机加密归档中。
 
-继续更新此验证环境时使用 `FORGE_NAMESPACE=forge-tenant-split FORGE_IMAGE_TAG=0.5.0-roles ./scripts/deploy-lab.sh`。前端 E2E 同时设置 `FORGE_NAMESPACE=forge-tenant-split`。本机端口转发命令：
+部署脚本默认使用当前命名空间。更新时用 `FORGE_IMAGE_TAG=<版本> ./scripts/deploy-lab.sh`。前端 E2E 默认使用同一命名空间。本机端口转发命令：
 
 ```sh
 kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tenant-web 8483:80
