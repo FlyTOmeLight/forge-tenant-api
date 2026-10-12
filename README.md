@@ -80,3 +80,25 @@ kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tena
 ```
 
 后续功能已迁入：项目执行配置与接入检查、直接新建问题任务、多审查者、每轮配置快照、Agent 判断、代码差异，以及统一导航下的三种任务布局。研发业务现已迁到独立 forge-coding-api，真实模型交付结果见该仓库的验证记录。
+
+## 本机 Forge → GitLab 单点登录
+
+当前工作台使用 `http://127.0.0.1:8483`，GitLab 使用 `http://127.0.0.1:18080`。首次登录 Forge 后，打开项目或 MR 会自动完成 GitLab 登录并返回原页面。升级前的 Forge 会话没有身份 Cookie，需要退出 Forge 后重新登录一次。
+
+当前配置由 `scripts/configure-lab-sso.py` 维护。脚本使用已有 Secret 中的凭证，在内存中更新既有 Casdoor/GitLab 客户端，保留账号、外部身份与项目权限。需要 Python 3、Ruby 标准 YAML 库、kubectl、Helm 和已安装版本的 GitLab Chart，不需要导出凭证：
+
+```sh
+# 保持转发运行，再在另一个终端运行配置脚本。
+kubectl --context orbstack -n tenant-lab port-forward svc/casdoor 18500:8000 --address 127.0.0.1
+python3 scripts/configure-lab-sso.py --gitlab-chart /path/to/gitlab-10.4.1.tgz
+```
+
+脚本默认更新 `forge-tenant-split`，可通过 `--namespace` 指定。GitLab 和 Forge 的浏览器入口必须保持可达。本机 GitLab 的 `18080` 转发已由用户级 launchd 服务 `dev.light.forge-gitlab-portforward` 托管，登录后启动，进程退出后自动重启。配置位于 `~/Library/LaunchAgents/dev.light.forge-gitlab-portforward.plist`，仅监听 `127.0.0.1`。可用 `launchctl print gui/$(id -u)/dev.light.forge-gitlab-portforward` 检查状态；不要同时启动另一条 GitLab 转发。工作台的 `8483` 转发同样由用户级 launchd 服务 `dev.light.forge-web-portforward` 托管，配置位于 `~/Library/LaunchAgents/dev.light.forge-web-portforward.plist`，在 Pod 更新导致断开后自动重连。配置后运行前端仓库的 `npm run test:sso`，使用已有可访问 MR 验证完整跳转，不创建或修改 MR。完整租户与权限回归使用 `npm run test:e2e`。
+
+GitLab 实例管理员的本地账号入口为 `/users/sign_in?auto_sign_in=false`。配置依据：[GitLab OmniAuth](https://docs.gitlab.com/integration/omniauth/) 与 [OpenID Connect](https://docs.gitlab.com/administration/auth/oidc/)。
+
+## GitLab 凭据热加载
+
+Helm 将应用 Secret 的 `GITLAB_TOKEN` 挂载为 `/var/run/forge-gitlab/token`，并设置 `GITLAB_TOKEN_FILE`。API 与 Worker 每次请求读取当前文件，Secret 更新后无需重启。文件配置后若缺失或为空，请求报错，不使用旧环境变量。环境变量方式继续用于本地运行。
+
+共享服务令牌的定时续期由 `forge-coding-api` Chart 的 `gitlabCredentials` CronJob 负责。本服务的 API 与 Worker 应列入其 `otherTargets`，所属命名空间应列入 `otherNamespaces`。`/forge gitlab-credential-status` 使用相同客户端读取挂载文件，仅输出令牌元数据。

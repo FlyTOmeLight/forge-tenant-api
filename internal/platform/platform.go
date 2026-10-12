@@ -103,7 +103,7 @@ func New(ctx context.Context, c config.Config) (*App, error) {
 	transport.Proxy = nil
 	transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	client := &http.Client{Transport: transport, Timeout: 20 * time.Second, CheckRedirect: func(r *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
-	a := &App{DB: db, Config: c, HTTP: client, cipher: aead, Casdoor: &remote.Casdoor{URL: c.CasdoorURL, ClientID: c.CasdoorClient, Secret: c.CasdoorSecret, Organization: c.Organization, HTTP: client}, GitLab: &remote.GitLab{URL: c.GitLabURL, Token: c.GitLabToken, HTTP: client}}
+	a := &App{DB: db, Config: c, HTTP: client, cipher: aead, Casdoor: &remote.Casdoor{URL: c.CasdoorURL, ClientID: c.CasdoorClient, Secret: c.CasdoorSecret, Organization: c.Organization, HTTP: client}, GitLab: &remote.GitLab{URL: c.GitLabURL, Token: c.GitLabToken, TokenFile: c.GitLabTokenFile, HTTP: client}}
 	return a, nil
 }
 func (a *App) Migrate(ctx context.Context) error {

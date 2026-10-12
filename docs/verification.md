@@ -1,3 +1,14 @@
+## 2026-10-05：Forge → GitLab 单点登录
+
+部署于 `forge-tenant-split`，API/Web 镜像为 `0.7.0-sso`。Forge 入口 `http://127.0.0.1:8483`，GitLab 入口 `http://127.0.0.1:18080`。GitLab 继续使用 Chart 10.4.1 / CE 19.4.1。
+
+- 先用真实 PostgreSQL 回归测试复现身份 Cookie 被丢弃，旧实现失败；修复后后端全部 `go test -tags=nomsgpack -race -count=1 ./...` 通过，无数据库跳过；Go vet、Helm lint 通过。
+- Vue 类型检查、生产构建和 Prettier 检查通过；前后端镜像构建通过。
+- 真实身份与权限 E2E 13 组通过。GitLab 检查改为复用已登录 Forge 成员的浏览器上下文，不再次输入账号密码。
+- 独立 SSO 验收 7 项通过：从实际任务 `task_fc020e1fac4480634a4767e6` 点击 MR !3 链接并返回原 MR；全程仅提交一次密码；GitLab 用户 ID 为 5，与 Forge 预配置映射一致；刷新保留登录；匿名仍需登录；退出清除 Forge/身份 Cookie；过期身份会话回到表单。浏览器没有 DNS 映射或证书例外，未修改 MR。
+
+复现命令见前端 `npm run test:sso` 与后端 README。原始脱敏结果在前端 `.local/sso-evidence/result.json`，MR 截图为 `gitlab-mr.png`，完整权限回归为 `tenant-e2e.json`。升级前登录过的浏览器需退出 Forge 后重新登录一次，以建立新增身份会话。此变更提供单点登录；退出 Forge 不会终止 GitLab 已有的独立会话。
+
 ## 2026-10-05：Coding 后端拆分
 
 研发任务已迁到独立 forge-coding-api；原任务 ID、MR 关联和未知停止状态保留。统一控制台按接口路径访问两个后端。真实模型修复、Draft MR、人工介入与撤权停止均已验证；详见 [Coding 验证记录](https://github.com/FlyTOmeLight/forge-coding-api/blob/main/docs/verification.md)。身份与权限浏览器回归 13 项通过。

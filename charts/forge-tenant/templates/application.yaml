@@ -25,14 +25,16 @@ spec:
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           args: [migrate]
           envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
-          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}]
+          env: [{name: GITLAB_TOKEN_FILE, value: /var/run/forge-gitlab/token}]
+          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}, {name: gitlab-token, mountPath: /var/run/forge-gitlab, readOnly: true}]
         {{- if eq $mode "api" }}
         - name: bootstrap
           image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           args: [bootstrap]
           envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
-          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}]
+          env: [{name: GITLAB_TOKEN_FILE, value: /var/run/forge-gitlab/token}]
+          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}, {name: gitlab-token, mountPath: /var/run/forge-gitlab, readOnly: true}]
         {{- end }}
       containers:
         - name: {{ $mode }}
@@ -40,11 +42,12 @@ spec:
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           args: [{{ $mode }}]
           envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
+          env: [{name: GITLAB_TOKEN_FILE, value: /var/run/forge-gitlab/token}]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
-          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}]
+          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}, {name: gitlab-token, mountPath: /var/run/forge-gitlab, readOnly: true}]
           {{- if eq $mode "api" }}
           ports: [{containerPort: 8080}]
           readinessProbe:
@@ -58,6 +61,10 @@ spec:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 256Mi}
       volumes:
+        - name: gitlab-token
+          secret:
+            secretName: {{ $.Values.existingSecret }}
+            items: [{key: GITLAB_TOKEN, path: token}]
         - name: ca
           secret: {secretName: {{ $.Values.caSecret }}}
 ---

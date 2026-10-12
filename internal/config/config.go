@@ -8,12 +8,13 @@ import (
 	"strings"
 )
 
-type Config struct{ DatabaseURL, PublicURL, Issuer, ClientID, ClientSecret, CasdoorURL, CasdoorClient, CasdoorSecret, Organization, GitLabURL, GitLabPublicURL, GitLabToken, BootstrapUser, AppKey, ServiceToken, CAFile, Listen, ModelURL string }
+type Config struct{ DatabaseURL, PublicURL, Issuer, ClientID, ClientSecret, CasdoorURL, CasdoorClient, CasdoorSecret, Organization, GitLabURL, GitLabPublicURL, GitLabClientID, GitLabToken, GitLabTokenFile, BootstrapUser, AppKey, ServiceToken, CAFile, Listen, ModelURL string }
 
 func Load() (Config, error) {
-	c := Config{DatabaseURL: os.Getenv("DATABASE_URL"), PublicURL: strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"), Issuer: os.Getenv("OIDC_ISSUER"), ClientID: os.Getenv("OIDC_CLIENT_ID"), ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"), CasdoorURL: strings.TrimRight(os.Getenv("CASDOOR_URL"), "/"), CasdoorClient: os.Getenv("CASDOOR_CLIENT_ID"), CasdoorSecret: os.Getenv("CASDOOR_SECRET"), Organization: os.Getenv("CASDOOR_ORGANIZATION"), GitLabURL: strings.TrimRight(os.Getenv("GITLAB_URL"), "/"), GitLabToken: os.Getenv("GITLAB_TOKEN"), BootstrapUser: os.Getenv("BOOTSTRAP_USERNAME"), AppKey: os.Getenv("APP_KEY"), ServiceToken: os.Getenv("SERVICE_TOKEN"), CAFile: os.Getenv("CA_FILE"), Listen: os.Getenv("LISTEN_ADDR")}
+	c := Config{DatabaseURL: os.Getenv("DATABASE_URL"), PublicURL: strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"), Issuer: os.Getenv("OIDC_ISSUER"), ClientID: os.Getenv("OIDC_CLIENT_ID"), ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"), CasdoorURL: strings.TrimRight(os.Getenv("CASDOOR_URL"), "/"), CasdoorClient: os.Getenv("CASDOOR_CLIENT_ID"), CasdoorSecret: os.Getenv("CASDOOR_SECRET"), Organization: os.Getenv("CASDOOR_ORGANIZATION"), GitLabURL: strings.TrimRight(os.Getenv("GITLAB_URL"), "/"), GitLabToken: os.Getenv("GITLAB_TOKEN"), GitLabTokenFile: os.Getenv("GITLAB_TOKEN_FILE"), BootstrapUser: os.Getenv("BOOTSTRAP_USERNAME"), AppKey: os.Getenv("APP_KEY"), ServiceToken: os.Getenv("SERVICE_TOKEN"), CAFile: os.Getenv("CA_FILE"), Listen: os.Getenv("LISTEN_ADDR")}
 	c.ModelURL = strings.TrimRight(os.Getenv("MODEL_URL"), "/")
-	c.GitLabPublicURL = os.Getenv("GITLAB_PUBLIC_URL")
+	c.GitLabClientID = os.Getenv("GITLAB_OIDC_CLIENT_ID")
+	c.GitLabPublicURL = strings.TrimRight(os.Getenv("GITLAB_PUBLIC_URL"), "/")
 	if c.GitLabPublicURL == "" {
 		c.GitLabPublicURL = c.GitLabURL
 	}

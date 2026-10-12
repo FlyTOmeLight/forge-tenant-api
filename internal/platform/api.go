@@ -47,6 +47,7 @@ func (a *App) Handler() http.Handler {
 			return
 		}
 		a.cookie(w, "forge_session", "", -1)
+		a.cookie(w, "forge_identity", "", -1)
 		JSON(w, 200, Object{"ok": true})
 	}))
 	route(m, "GET", "/api/v1/me", a.authorized(a.me))

@@ -21,6 +21,9 @@ func main() {
 	}
 }
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "gitlab-credential-status" {
+		return credentialStatus()
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err

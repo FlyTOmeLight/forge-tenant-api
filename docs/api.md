@@ -31,6 +31,14 @@
 
 现阶段操作和审计通过企业快照返回，设计稿中的独立列表端点尚未拆出。设计稿是目标设计，本文件记录当前可调用接口。
 
+## Forge / GitLab 统一登录
+
+Forge 与 GitLab 的浏览器授权入口统一为 `PUBLIC_URL/login/oauth/authorize`。登录页只接收后端已配置的客户端与精确回调地址：Forge 使用 `OIDC_CLIENT_ID` 和 `/auth/callback`，GitLab 使用 `GITLAB_OIDC_CLIENT_ID` 与 `GITLAB_PUBLIC_URL/users/auth/openid_connect/callback`。Forge 回调继续校验一次性 state、PKCE 和 nonce；GitLab 回调由其 OIDC 适配器校验。
+
+身份代理只把 Casdoor 的 `casdoor_session_id` 映射为浏览器的 `forge_identity`。该 Cookie 为 host-only、HttpOnly、SameSite=Lax，HTTPS 部署启用 Secure。请求身份服务时只携带该身份 Cookie，不转发 Forge 会话或管理凭证。登录页发现身份 Cookie 后尝试复用 Casdoor 会话换取当前客户端的授权码；失效时显示密码表单。`POST /auth/logout` 清除 Forge 和身份 Cookie；GitLab 已建立的独立会话仍按 GitLab 的退出流程处理。
+
+GitLab 需将授权端点指向上述 Forge 登录页，并启用 `autoSignInWithProvider: openid_connect`。issuer、token、userinfo 与 JWKS 端点继续使用 Casdoor；关闭 discovery 后显式设置端点，防止 discovery 将授权地址覆盖回旧身份页面。现有用户的 `sub` / `extern_uid` 和项目权限保持原绑定。生产环境使用可访问的 HTTPS 域名，浏览器无需集群 DNS 或证书例外。
+
 ## 控制台权限边界
 
 平台管理员只管理租户生命周期和全局连接。进入租户工作区必须有有效成员身份。创建租户不会自动给操作者增加成员身份，只有 `admin_user_id` 指定的账号成为首位管理员。已有成员关系不变。

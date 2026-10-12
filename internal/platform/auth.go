@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -120,20 +121,24 @@ func (a *App) authorized(fn func(http.ResponseWriter, *http.Request, User)) http
 }
 func (a *App) identityProxy(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if q.Get("clientId") != a.Config.ClientID || q.Get("redirectUri") != a.OAuth.RedirectURL || q.Get("type") != "code" {
+	forgeLogin := q.Get("clientId") == a.Config.ClientID && q.Get("redirectUri") == a.OAuth.RedirectURL
+	gitlabLogin := a.Config.GitLabClientID != "" && q.Get("clientId") == a.Config.GitLabClientID && q.Get("redirectUri") == a.Config.GitLabPublicURL+"/users/auth/openid_connect/callback"
+	if (!forgeLogin && !gitlabLogin) || q.Get("type") != "code" || q.Get("responseType") != "code" || q.Get("state") == "" {
 		fail(w, problem(400, "INVALID_LOGIN_CLIENT", "登录请求无效"))
 		return
 	}
-	c, e := r.Cookie("forge_login")
-	if e != nil {
-		fail(w, problem(400, "INVALID_LOGIN", "请重新发起登录"))
-		return
-	}
-	var ok bool
-	e = a.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM login_flows WHERE token_hash=$1 AND state_hash=$2 AND expires_at>now())`, Hash(c.Value), Hash(q.Get("state"))).Scan(&ok)
-	if e != nil || !ok {
-		fail(w, problem(400, "INVALID_LOGIN", "登录请求已过期"))
-		return
+	if forgeLogin {
+		c, e := r.Cookie("forge_login")
+		if e != nil {
+			fail(w, problem(400, "INVALID_LOGIN", "请重新发起登录"))
+			return
+		}
+		var ok bool
+		e = a.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM login_flows WHERE token_hash=$1 AND state_hash=$2 AND expires_at>now())`, Hash(c.Value), Hash(q.Get("state"))).Scan(&ok)
+		if e != nil || !ok {
+			fail(w, problem(400, "INVALID_LOGIN", "登录请求已过期"))
+			return
+		}
 	}
 	if r.Method == "POST" && !a.origin(r) {
 		fail(w, problem(403, "CSRF_REJECTED", "请求来源无效"))
@@ -148,14 +153,42 @@ func (a *App) identityProxy(w http.ResponseWriter, r *http.Request) {
 	req.Host = issuer.Host
 	req.Header.Set("X-Forwarded-Proto", issuer.Scheme)
 	req.Header.Set("Content-Type", "application/json")
+	// Both OIDC clients use this origin. Only the identity-provider session is forwarded.
+	if c, err := r.Cookie("forge_identity"); err == nil {
+		req.AddCookie(&http.Cookie{Name: "casdoor_session_id", Value: c.Value})
+	}
 	resp, e := a.HTTP.Do(req)
 	if e != nil {
 		fail(w, problem(502, "IDENTITY_UNAVAILABLE", "身份服务暂不可用"))
 		return
 	}
 	defer resp.Body.Close()
-	// Never forward management credentials or a third-party redirect to the browser.
+	// Casdoor can renew its session during login. Keep it host-only and HttpOnly;
+	// no Forge session, upstream management cookie, or credential crosses this boundary.
+	for _, c := range resp.Cookies() {
+		if c.Name != "casdoor_session_id" {
+			continue
+		}
+		c.Name = "forge_identity"
+		c.Path, c.Domain = "/", ""
+		c.HttpOnly = true
+		c.Secure = strings.HasPrefix(a.Config.PublicURL, "https:")
+		c.SameSite = http.SameSiteLaxMode
+		http.SetCookie(w, c)
+	}
+	body := mustReadLimited(resp.Body)
+	if r.URL.Path == "/api/get-app-login" && resp.StatusCode == http.StatusOK {
+		var result Object
+		if json.Unmarshal(body, &result) != nil {
+			fail(w, problem(502, "INVALID_IDENTITY_RESPONSE", "身份服务返回无效响应"))
+			return
+		}
+		c, err := r.Cookie("forge_identity")
+		result["sessionAvailable"] = err == nil && c.Value != ""
+		JSON(w, resp.StatusCode, result)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(mustReadLimited(resp.Body))
+	_, _ = w.Write(body)
 }
