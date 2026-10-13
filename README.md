@@ -7,23 +7,23 @@
 按 [Go 官方服务端模块布局](https://go.dev/doc/modules/layout#server-project) 与 server-go 的职责划分组织。依赖从入口显式构造，事务和权限判断由租户业务层负责。
 
 ```text
-cmd/server/         api / worker / migrate / bootstrap 程序入口，产物仍为 forge
-internal/service/   基础设施装配、Bootstrap 初始化与资源关闭
-internal/app/tenant/
-  controller*.go    路由、HTTP 参数绑定、会话 / CSRF、Cookie 与响应
-  service*.go       租户、成员、项目、团队、权限、邀请、登录与同步业务
-internal/table/     PostgreSQL 记录类型、按领域组织的 SQL 查询与迁移
-internal/client/    Casdoor、GitLab、OIDC 协议与 HTTP 传输配置
-sdk/go/tenantv1/     对外 Go SDK 与内部服务接口共享契约
-internal/config/    类型化业务配置与校验
-conf/server/        server-go 配置与环境变量占位符
-configs/            环境变量配置样例
-charts/forge-tenant/ API、Worker、PostgreSQL、可选接口 Ingress
-scripts/            联调准备与 Helm 发布
-docs/               API 与 Agent 集成契约
+cmd/server/               进程入口与 api / worker / migrate / bootstrap 命令
+internal/service/         HTTPHost 服务、路由装配、资源与 Worker 生命周期
+internal/app/account/     账号、登录、会话；Controller / Service / router
+internal/app/workspace/   租户工作区、成员、团队和项目写入；Controller / Service / router
+internal/app/authorization/ 项目权限、角色、权限说明和内部接口；Controller / Service / router
+internal/app/synchronization/ 持久化 GitLab 同步与核验
+internal/app/httpapi/     Cookie 会话中间件、绑定和既有错误协议映射
+internal/app/apperror/    领域错误
+internal/identity/       统一账号身份和令牌
+internal/table/          GORM 持久化记录、查询与 SQL 迁移
+internal/client/         Casdoor、GitLab、OIDC 与 HTTP 连接
+internal/config/         业务配置
+sdk/go/tenantv1/         服务调用契约与客户端
+conf/server/            server-go 配置与环境变量占位符
 ```
 
-`tenant.Controller` 实现 `host.Service`，通过 `RegisterRoutes` 安装业务路由，调用 `tenant.Service` 完成业务操作。Controller 提取路径、版本、幂等键和请求体，不直接操作数据库；Service 接收 context、账号和领域参数，不接收 HTTP 请求或响应对象。Table 接收数据库或事务句柄，负责记录查询和写入；业务事务、权限判断和 GitLab 同步编排留在 Service。`internal/service.Resources` 构造数据库、HTTP 传输、外部客户端与业务对象，并通过 Bootstrap 负责部分初始化失败的清理和退出释放。
+`internal/service.API` 实现 `host.Service`，统一安装会话与服务 Bearer 中间件并注册各领域 router。Controller 直接接收 Gin context、绑定类型化请求并调用业务 Service；移除 net/http handler 桥接，router 只注册 Controller 方法。账号、工作区、授权与同步各有独立 Service 和依赖；工作区的公开写方法负责授权、事务、持久化幂等与审计 / outbox，控制器不编排事务。授权 Service 复用 SDK 权限响应类型，工作区调用授权 Service 计算项目能力，同步模块通过版本核验更新已观测授权。`Resources` 负责资源构造、初始化失败清理和关闭，`Worker` 负责同步协程的取消与等待。
 
 数据库连接由 `server-go/db.Module` 管理，Table 使用 GORM 的 `WithContext`、`Raw` / `Exec` 执行查询与写入，业务层使用 GORM 事务。`DATABASE_URL` 原样传给框架 DSN，连接池上限为 12；同步 Worker 使用 GORM `Connection` 固定会话锁连接。表结构与版本化 SQL 迁移保留，不使用 AutoMigrate。
 
@@ -47,7 +47,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ## 服务调用 SDK
 
-可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用会话校验、租户工作区、项目解析、项目权限和撤权事件接口。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.8.1 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.8.1` 安装。
+可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用会话校验、租户工作区、项目解析、项目权限和撤权事件接口。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.9.0 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.9.0` 安装。
 
 ## Kubernetes / Helm
 
@@ -57,7 +57,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ```sh
 python3 scripts/prepare-lab.py --lab-config /path/to/infra.json --kubectl /path/to/kubectl
-FORGE_IMAGE_TAG=0.8.1 ./scripts/deploy-lab.sh
+FORGE_IMAGE_TAG=0.9.0 ./scripts/deploy-lab.sh
 ```
 
 本机部署统一使用 namespace `forge-tenant-split`。后端 Helm release 为 `forge-tenant`，前端独立 release 为 `forge-tenant-web`。浏览器入口通过前端 Service 提供：

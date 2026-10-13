@@ -8,20 +8,26 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/tenant"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/account"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/authorization"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/synchronization"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/workspace"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/config"
 )
 
 // Resources constructs and owns infrastructure; tenant services borrow it.
 type Resources struct {
-	Config     config.Config
-	Mode       string
-	Tenant     *tenant.Service
-	Controller *tenant.Controller
-	DB         *gorm.DB
-	transport  *http.Client
-	database   db.Module
+	Config        config.Config
+	Mode          string
+	Accounts      *account.Service
+	Workspaces    *workspace.Service
+	Authorization *authorization.Service
+	API           *API
+	Worker        *Worker
+	DB            *gorm.DB
+	transport     *http.Client
+	database      db.Module
 }
 
 func (s *Resources) Initialize(ctx context.Context) (err error) {
@@ -66,22 +72,33 @@ func (s *Resources) Initialize(ctx context.Context) (err error) {
 			return err
 		}
 	}
-	s.Tenant, err = tenant.New(s.DB, c, casdoor, gitlab, identity)
+	s.Accounts = account.New(s.DB, c, casdoor, identity)
+	s.Authorization = authorization.New(s.DB)
+	s.Workspaces, err = workspace.New(s.DB, c, casdoor, s.Accounts, s.Authorization)
 	if err != nil {
 		return err
 	}
-	s.Controller = tenant.NewController(s.Tenant)
+	s.API = NewAPI(s.DB, c, s.Accounts, s.Workspaces, s.Authorization)
+	s.Worker = NewWorker(synchronization.New(s.DB, gitlab))
 	return nil
 }
 
 func (s *Resources) Close(ctx context.Context) error {
+	if s.Worker != nil {
+		if err := s.Worker.Stop(ctx); err != nil {
+			return err
+		}
+		s.Worker = nil
+	}
 	if s.transport != nil {
 		s.transport.CloseIdleConnections()
 		s.transport = nil
 	}
 	err := s.database.Close(ctx)
 	s.DB = nil
-	s.Tenant = nil
-	s.Controller = nil
+	s.Accounts = nil
+	s.Workspaces = nil
+	s.Authorization = nil
+	s.API = nil
 	return err
 }

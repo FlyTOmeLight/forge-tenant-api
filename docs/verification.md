@@ -1,3 +1,16 @@
+## 2026-10-13：v0.9.0 app、router 与 Service 重构
+
+移除单一 `internal/app/tenant` 包和 net/http handler 到 Gin 的 `route(...)` 桥接。业务拆成 account（账号 / 会话）、workspace（租户 / 成员 / 团队 / 项目事务）、authorization（授权与权限说明）和 synchronization（持久化同步）；三个 HTTP 模块各有 Controller、router 和独立 Service。router 使用 Gin 路由组，只注册原生 Controller 方法。
+
+`internal/service.API` 实现框架 `host.Service`，负责路由和会话 / 服务鉴权装配；Controller 不再承担框架生命周期。Resources 显式构造并拥有 DB / HTTP 客户端，Worker 拥有同步协程的取消和等待，数据库在同步退出后关闭。工作区公开 Service 方法使用具体请求类型并负责权限、事务、持久化幂等、审计和 outbox；路由不再传入事务业务回调。授权响应复用 SDK 类型，成员权限报告采用明确 JSON 标签的类型。表结构与版本化 SQL 迁移保留。
+
+- 发布版 server-go v0.4.0、无 replace / workspace；真实 PostgreSQL 全仓库 race 测试通过，无数据库跳过。新增直接业务 Service 的授权 / 幂等 / 回滚验证，严格请求绑定和 Worker 停止等待验证通过。Go vet、gofmt / gorgeous、git diff --check、Helm lint 和 CGO_ENABLED=0 镜像构建通过。
+- 候选实际 migrate、bootstrap、API、Worker 与数据库探针通过。完整前端真实 Casdoor / GitLab 验收 13 组通过，覆盖权限说明、直接 / 多团队授权、降权、撤权、停用恢复、Worker 暂停恢复、跨租户、幂等、CSRF、登录和持久化事件。
+- 浏览器验收发现并修复成员权限报告字段大小写回归，加入真实 HTTP 契约测试；修正后的完整验收通过。JSON 成功响应改用框架 / Gin 渲染，字段与语义保留；公开写请求使用类型化绑定，未知字段或错误字段类型返回 400。
+- API 与同步 Worker 实际 SIGTERM 退出码均为 0；本轮 namespace、schema、新建 GitLab Group 与成员账号已清理。脱敏摘要见 `.local/app-evidence/result.json`。
+
+共享 `forge-tenant-split` 部署升级被自动审批拒绝，尚未切换；批准后可更新为已验收的 `forge-tenant-api:0.9.0` 镜像。
+
 ## 2026-10-13：v0.8.1 数据库框架迁移
 
 数据库连接与关闭改由发布版 `server-go v0.4.0` 的 `db.Module` 管理；框架自 v0.3.2 起新增 `db.Config.DSN`，原样保留 PostgreSQL URL 的 TLS、search_path、时区和驱动参数。租户 Table 查询、写入、迁移和业务事务使用 GORM，删除原 pgxpool 装配与 pgx 查询接口。GORM PostgreSQL 驱动使用 v1.6.0，底层 pgx/v5 v5.11.0；移除带入的旧 pgx/v4。框架最低 Go 版本为 1.25，本项目 Go 1.27.1 满足要求。旧驱动漏洞记录见 [pgx 官方公告](https://github.com/jackc/pgx/security/advisories/GHSA-m7wr-2xf7-cm9p)。同步 Worker 使用 GORM `Connection` 固定会话锁连接；解锁失败时丢弃该连接，避免锁留在池内。表结构、迁移 SQL、HTTP / SDK 契约不变。

@@ -75,7 +75,7 @@ func run() (result error) {
 		defer cancel()
 		result = errors.Join(result, bootstrap.Close(closeCtx))
 	}()
-	app := resources.Tenant
+
 	switch mode {
 	case "migrate":
 		operation, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -84,11 +84,11 @@ func run() (result error) {
 	case "bootstrap":
 		operation, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		return app.Bootstrap(operation)
+		return resources.Accounts.Bootstrap(operation)
 	case "worker":
-		return app.RunWorker(ctx)
+		return resources.Worker.Run(ctx)
 	default:
-		h, err := host.NewHTTPHost(manager, log, resources.Controller.SetupHTTP, resources.Controller)
+		h, err := host.NewHTTPHost(manager, log, resources.API.SetupHTTP, resources.API)
 		if err != nil {
 			return err
 		}

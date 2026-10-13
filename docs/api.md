@@ -117,6 +117,8 @@ GitLab 需将授权端点指向上述 Forge 登录页，并启用 `autoSignInWit
 
 ## server-go HTTP 接入
 
+Controller 使用原生 Gin，公开写操作绑定明确的请求结构；未知字段或错误字段类型返回 400。业务 Service 的写方法独立执行权限检查、事务、持久化幂等和审计 / outbox。
+
 业务路径、Cookie / CSRF、幂等键、租户版本、响应字段和 `{error:{code,message}}` 错误格式保持现有契约。内部接口使用 server-go Bearer 鉴权，须提供完整 `Authorization: Bearer <SERVICE_TOKEN>`；只传裸 token 会被拒绝。JSON 参数通过框架严格绑定，拒绝连续文档和结构化请求中的未知字段；请求体上限仍为 64 KiB。写操作保留原始请求字节用于幂等摘要。
 
 框架为请求生成或传递 `Request-ID`，记录方法、路由、状态与耗时。Recovery 在响应提交前返回 JSON 错误；提交后停止处理，不追加第二段错误响应。租户 API 提供 `sdk/go/tenantv1` Go SDK，覆盖五个内部服务接口；撤权事件仍通过 JSON 游标轮询读取，没有 SSE。
