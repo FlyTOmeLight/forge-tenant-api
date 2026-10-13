@@ -53,7 +53,7 @@ func (a *Service) CompleteLogin(ctx context.Context, flow, state, code string) (
 	}
 
 	var uid string
-	e = table.ActiveUserBySubject(ctx, a.DB, a.Config.Issuer, subject).
+	e = table.ActiveUserBySubject(ctx, a.DB, a.Config.Casdoor.Issuer, subject).
 		Scan(&uid)
 	if e != nil {
 		return "", "", apperror.New(403, "IDENTITY_NOT_ENROLLED", "此账号尚未在 Forge 中激活")
@@ -77,9 +77,9 @@ func (a *Service) IdentityLogin(
 	clientID, redirect, kind, responseType, state, flow, method, uri, identitySession string,
 	body io.Reader,
 ) (client.LoginResponse, error) {
-	forge := clientID == a.Config.ClientID && redirect == a.Identity.OAuth.RedirectURL
-	gitlab := a.Config.GitLabClientID != "" && clientID == a.Config.GitLabClientID &&
-		redirect == a.Config.GitLabPublicURL+"/users/auth/openid_connect/callback"
+	forge := clientID == a.Config.Casdoor.OIDCClientID && redirect == a.Identity.OAuth.RedirectURL
+	gitlab := a.Config.Gitlab.ClientID != "" && clientID == a.Config.Gitlab.ClientID &&
+		redirect == a.Config.Gitlab.PublicURL+"/users/auth/openid_connect/callback"
 	if (!forge && !gitlab) || kind != "code" || responseType != "code" || state == "" {
 		return client.LoginResponse{}, apperror.New(400, "INVALID_LOGIN_CLIENT", "登录请求无效")
 	}
@@ -94,7 +94,7 @@ func (a *Service) IdentityLogin(
 			return client.LoginResponse{}, apperror.New(400, "INVALID_LOGIN", "登录请求已过期")
 		}
 	}
-	response, err := a.Casdoor.ProxyLogin(ctx, a.Config.Issuer, method, uri, identitySession, body)
+	response, err := a.Casdoor.ProxyLogin(ctx, a.Config.Casdoor.Issuer, method, uri, identitySession, body)
 	if err != nil {
 		return client.LoginResponse{}, apperror.New(502, "IDENTITY_UNAVAILABLE", "身份服务暂不可用")
 	}

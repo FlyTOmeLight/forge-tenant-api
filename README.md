@@ -29,7 +29,7 @@ conf/server/            server-go 配置与环境变量占位符
 
 server-go 管理配置快照、HTTPHost 启动与排空、请求 ID、日志、Recovery、严格 JSON 绑定和服务 Bearer 鉴权。Controller 在 HTTP 边界将领域及框架错误映射为既有 `{error:{code,message}}` 格式。租户幂等结果仍与业务、审计和 outbox 一起写入 PostgreSQL。
 
-默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[Forge]` 保留既有环境变量名称，`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。配置在启动时读取；调整后重启对应进程。API 收到退出信号后由 HTTPHost 排空请求，再由 Bootstrap 关闭数据库和外部 HTTP 空闲连接；Worker 取消并完成当前操作的结果持久化后释放资源。
+默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[Forge]` 配置本服务；顶层 `[Gitlab]` 集中配置 GitLab API / 浏览器地址、OIDC 客户端和管理凭据，`[Casdoor]` 集中配置身份服务、管理客户端、组织和 Forge OIDC 客户端。各配置保留既有环境变量名称；`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。GitLab API 调用使用官方 `client-go/v3`；Casdoor 管理调用复用官方 `casdoor-go-sdk` 的客户端 URL、用户和响应类型。Casdoor SDK v1.56.0 的用户方法不接收 context，HTTP 客户端为包级全局，因此传输保留实例适配，以支持请求取消及私有 CA。配置在启动时读取；调整后重启对应进程。API 收到退出信号后由 HTTPHost 排空请求，再由 Bootstrap 关闭数据库和外部 HTTP 空闲连接；Worker 取消并完成当前操作的结果持久化后释放资源。
 
 `/healthz` 返回 HTTPHost 的进程就绪状态；`/readyz` 额外检查 PostgreSQL，Helm readinessProbe 使用后者。`/ping` 和 `/version` 由框架提供。
 
@@ -47,7 +47,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ## 服务调用 SDK
 
-可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用会话校验、租户工作区、项目解析、项目权限和撤权事件接口。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.9.0 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.9.0` 安装。
+可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用会话校验、租户工作区、项目解析、项目权限和撤权事件接口。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.9.1 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.9.1` 安装。
 
 ## Kubernetes / Helm
 
@@ -57,7 +57,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ```sh
 python3 scripts/prepare-lab.py --lab-config /path/to/infra.json --kubectl /path/to/kubectl
-FORGE_IMAGE_TAG=0.9.0 ./scripts/deploy-lab.sh
+FORGE_IMAGE_TAG=0.9.1 ./scripts/deploy-lab.sh
 ```
 
 本机部署统一使用 namespace `forge-tenant-split`。后端 Helm release 为 `forge-tenant`，前端独立 release 为 `forge-tenant-web`。浏览器入口通过前端 Service 提供：

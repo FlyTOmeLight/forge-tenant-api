@@ -1,3 +1,10 @@
+## v0.9.1 外部 SDK 与配置验收
+
+- GitLab 使用官方 `gitlab.com/gitlab-org/api/client-go/v3 v3.18.0` 的类型化 API，删除手写 GitLab 请求与响应结构。官方 AuthSource 在每个请求读取 projected Secret；关闭 SDK 自动重试，保留 Worker 的重试策略、Retry-After 和权限冲突判定。
+- Casdoor 使用官方 `casdoor-go-sdk v1.56.0` 的 Client、URL/身份构造、User 和 Response。该版本用户方法不接受 context 且 HTTP 客户端为全局变量，保留实例 HTTP 传输适配，支持请求取消、私有 CA 和错误脱敏。OIDC 登录仍使用标准 OIDC/OAuth2 库。
+- 外部配置分别收至 TOML 顶层 `[Gitlab]` 和 `[Casdoor]`，原环境变量名称不变。验证实际默认配置的环境变量映射与直接 TOML 配置解析。
+- 设置真实 TEST_DATABASE_URL 后，全仓库 `go test -tags=nomsgpack -race -count=1 ./...` 通过，无数据库测试跳过。真实本机 Casdoor 创建/复用身份，GitLab 创建绑定用户、私有组和项目、授权 30→20→0 均通过，验收账号与组已清理。
+
 ## 2026-10-13：v0.9.0 app、router 与 Service 重构
 
 移除单一 `internal/app/tenant` 包和 net/http handler 到 Gin 的 `route(...)` 桥接。业务拆成 account（账号 / 会话）、workspace（租户 / 成员 / 团队 / 项目事务）、authorization（授权与权限说明）和 synchronization（持久化同步）；三个 HTTP 模块各有 Controller、router 和独立 Service。router 使用 Gin 路由组，只注册原生 Controller 方法。

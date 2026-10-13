@@ -76,7 +76,7 @@ func setup(t *testing.T) *fixture {
 			DatabaseURL:  parsed.String(),
 			AppKey:       strings.Repeat("ab", 32),
 			PublicURL:    "http://127.0.0.1:8383",
-			Issuer:       "https://identity.test",
+			Casdoor:      config.CasdoorConfig{Issuer: "https://identity.test"},
 			ServiceToken: strings.Repeat("test", 16),
 		},
 	)
@@ -452,10 +452,10 @@ func newTestService(ctx context.Context, c config.Config) (*testApplication, err
 		return nil, err
 	}
 	casdoor := &client.Casdoor{
-		URL:          c.CasdoorURL,
-		ClientID:     c.CasdoorClient,
-		Secret:       c.CasdoorSecret,
-		Organization: c.Organization,
+		URL:          c.Casdoor.URL,
+		ClientID:     c.Casdoor.ClientID,
+		Secret:       c.Casdoor.Secret,
+		Organization: c.Casdoor.Organization,
 		HTTP:         transport,
 	}
 	oidc := &client.OIDC{HTTP: transport}
@@ -473,9 +473,9 @@ func newTestService(ctx context.Context, c config.Config) (*testApplication, err
 		Sync: synchronization.New(
 			db,
 			&client.GitLab{
-				URL:       c.GitLabURL,
-				Token:     c.GitLabToken,
-				TokenFile: c.GitLabTokenFile,
+				URL:       c.Gitlab.URL,
+				Token:     c.Gitlab.Token,
+				TokenFile: c.Gitlab.TokenFile,
 				HTTP:      transport,
 			},
 		),

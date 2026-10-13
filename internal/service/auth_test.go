@@ -15,7 +15,7 @@ import (
 func TestLoginProxyPreservesIdentitySession(t *testing.T) {
 	f := setup(t)
 	a := f.a
-	a.Account.Config.ClientID = "forge-client"
+	a.Account.Config.Casdoor.OIDCClientID = "forge-client"
 	a.Identity.OAuth = oauth2.Config{RedirectURL: a.Account.Config.PublicURL + "/auth/callback"}
 	flow, state := identity.Token(), identity.Token()
 	err := a.DB.WithContext(f.ctx).
@@ -41,7 +41,7 @@ func TestLoginProxyPreservesIdentitySession(t *testing.T) {
 	defer upstream.Close()
 	a.Casdoor.URL = upstream.URL
 	q := url.Values{
-		"clientId":     {a.Account.Config.ClientID},
+		"clientId":     {a.Account.Config.Casdoor.OIDCClientID},
 		"redirectUri":  {a.Identity.OAuth.RedirectURL},
 		"responseType": {"code"},
 		"type":         {"code"},
@@ -69,9 +69,9 @@ func TestLoginProxyPreservesIdentitySession(t *testing.T) {
 func TestGitLabLoginClientBoundary(t *testing.T) {
 	f := setup(t)
 	a := f.a
-	a.Account.Config.ClientID = "forge-client"
-	a.Account.Config.GitLabClientID = "gitlab-client"
-	a.Account.Config.GitLabPublicURL = "https://gitlab.example.test"
+	a.Account.Config.Casdoor.OIDCClientID = "forge-client"
+	a.Account.Config.Gitlab.ClientID = "gitlab-client"
+	a.Account.Config.Gitlab.PublicURL = "https://gitlab.example.test"
 	a.Identity.OAuth = oauth2.Config{RedirectURL: a.Account.Config.PublicURL + "/auth/callback"}
 	calls := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,11 +84,11 @@ func TestGitLabLoginClientBoundary(t *testing.T) {
 		name, client, redirect, state, origin string
 		want                                  int
 	}{
-		{name: "registered GitLab", client: "gitlab-client", redirect: a.Account.Config.GitLabPublicURL + "/users/auth/openid_connect/callback", state: "state", origin: a.Account.Config.PublicURL, want: 200},
-		{name: "unregistered client", client: "foreign-client", redirect: a.Account.Config.GitLabPublicURL + "/users/auth/openid_connect/callback", state: "state", origin: a.Account.Config.PublicURL, want: 400},
+		{name: "registered GitLab", client: "gitlab-client", redirect: a.Account.Config.Gitlab.PublicURL + "/users/auth/openid_connect/callback", state: "state", origin: a.Account.Config.PublicURL, want: 200},
+		{name: "unregistered client", client: "foreign-client", redirect: a.Account.Config.Gitlab.PublicURL + "/users/auth/openid_connect/callback", state: "state", origin: a.Account.Config.PublicURL, want: 400},
 		{name: "foreign callback", client: "gitlab-client", redirect: "https://evil.example/callback", state: "state", origin: a.Account.Config.PublicURL, want: 400},
-		{name: "missing state", client: "gitlab-client", redirect: a.Account.Config.GitLabPublicURL + "/users/auth/openid_connect/callback", state: "", origin: a.Account.Config.PublicURL, want: 400},
-		{name: "foreign origin", client: "gitlab-client", redirect: a.Account.Config.GitLabPublicURL + "/users/auth/openid_connect/callback", state: "state", origin: "https://evil.example", want: 403},
+		{name: "missing state", client: "gitlab-client", redirect: a.Account.Config.Gitlab.PublicURL + "/users/auth/openid_connect/callback", state: "", origin: a.Account.Config.PublicURL, want: 400},
+		{name: "foreign origin", client: "gitlab-client", redirect: a.Account.Config.Gitlab.PublicURL + "/users/auth/openid_connect/callback", state: "state", origin: "https://evil.example", want: 403},
 		{name: "Forge without login flow", client: "forge-client", redirect: a.Identity.OAuth.RedirectURL, state: "state", origin: a.Account.Config.PublicURL, want: 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

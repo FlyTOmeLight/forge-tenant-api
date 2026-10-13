@@ -54,16 +54,16 @@ func (s *Resources) Initialize(ctx context.Context) (err error) {
 	}
 	c := s.Config
 	casdoor := &client.Casdoor{
-		URL:          c.CasdoorURL,
-		ClientID:     c.CasdoorClient,
-		Secret:       c.CasdoorSecret,
-		Organization: c.Organization,
+		URL:          c.Casdoor.URL,
+		ClientID:     c.Casdoor.ClientID,
+		Secret:       c.Casdoor.Secret,
+		Organization: c.Casdoor.Organization,
 		HTTP:         s.transport,
 	}
 	gitlab := &client.GitLab{
-		URL:       c.GitLabURL,
-		Token:     c.GitLabToken,
-		TokenFile: c.GitLabTokenFile,
+		URL:       c.Gitlab.URL,
+		Token:     c.Gitlab.Token,
+		TokenFile: c.Gitlab.TokenFile,
 		HTTP:      s.transport,
 	}
 	identity := &client.OIDC{HTTP: s.transport}

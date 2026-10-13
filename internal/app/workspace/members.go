@@ -56,7 +56,7 @@ func (a *Service) AddMember(ctx context.Context, u identity.User, r Change, req 
 				ctx,
 				tx,
 				uid,
-				a.Config.Issuer,
+				a.Config.Casdoor.Issuer,
 				"forge-"+strings.TrimPrefix(uid, "u_"),
 				name,
 				email,

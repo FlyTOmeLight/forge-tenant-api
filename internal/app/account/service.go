@@ -39,7 +39,7 @@ func (a *Service) Bootstrap(ctx context.Context) error {
 		ctx,
 		a.DB,
 		identity.ID("u"),
-		a.Config.Issuer,
+		a.Config.Casdoor.Issuer,
 		u.ID,
 		u.Name,
 		u.DisplayName,

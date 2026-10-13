@@ -9,26 +9,45 @@ import (
 	"github.com/FlyTOmeLight/server-go/conf"
 )
 
-type Config struct{ DatabaseURL, PublicURL, Issuer, ClientID, ClientSecret, CasdoorURL, CasdoorClient, CasdoorSecret, Organization, GitLabURL, GitLabPublicURL, GitLabClientID, GitLabToken, GitLabTokenFile, BootstrapUser, AppKey, ServiceToken, CAFile, ModelURL string }
+type Config struct {
+	DatabaseURL, PublicURL, BootstrapUser, AppKey, ServiceToken, CAFile, ModelURL string
+	Gitlab                                                                        GitlabConfig
+	Casdoor                                                                       CasdoorConfig
+}
+
+type GitlabConfig struct {
+	URL, PublicURL, ClientID, Token, TokenFile string
+}
+
+type CasdoorConfig struct {
+	URL, ClientID, Secret, Organization    string
+	Issuer, OIDCClientID, OIDCClientSecret string
+}
 
 func Load(snapshot *conf.Config) (Config, error) {
 	var c Config
 	if err := snapshot.UnmarshalKey("Forge", &c); err != nil {
 		return c, err
 	}
-	for _, value := range []*string{&c.PublicURL, &c.CasdoorURL, &c.GitLabURL, &c.ModelURL, &c.GitLabPublicURL} {
+	if err := snapshot.UnmarshalKey("Gitlab", &c.Gitlab); err != nil {
+		return c, err
+	}
+	if err := snapshot.UnmarshalKey("Casdoor", &c.Casdoor); err != nil {
+		return c, err
+	}
+	for _, value := range []*string{&c.PublicURL, &c.Casdoor.URL, &c.Gitlab.URL, &c.ModelURL, &c.Gitlab.PublicURL} {
 		*value = strings.TrimRight(*value, "/")
 	}
-	if c.GitLabPublicURL == "" {
-		c.GitLabPublicURL = c.GitLabURL
+	if c.Gitlab.PublicURL == "" {
+		c.Gitlab.PublicURL = c.Gitlab.URL
 	}
 
-	for name, value := range map[string]string{"DATABASE_URL": c.DatabaseURL, "PUBLIC_URL": c.PublicURL, "OIDC_ISSUER": c.Issuer, "OIDC_CLIENT_ID": c.ClientID, "OIDC_CLIENT_SECRET": c.ClientSecret, "CASDOOR_URL": c.CasdoorURL, "CASDOOR_CLIENT_ID": c.CasdoorClient, "CASDOOR_SECRET": c.CasdoorSecret, "CASDOOR_ORGANIZATION": c.Organization, "GITLAB_URL": c.GitLabURL, "APP_KEY": c.AppKey, "SERVICE_TOKEN": c.ServiceToken} {
+	for name, value := range map[string]string{"DATABASE_URL": c.DatabaseURL, "PUBLIC_URL": c.PublicURL, "OIDC_ISSUER": c.Casdoor.Issuer, "OIDC_CLIENT_ID": c.Casdoor.OIDCClientID, "OIDC_CLIENT_SECRET": c.Casdoor.OIDCClientSecret, "CASDOOR_URL": c.Casdoor.URL, "CASDOOR_CLIENT_ID": c.Casdoor.ClientID, "CASDOOR_SECRET": c.Casdoor.Secret, "CASDOOR_ORGANIZATION": c.Casdoor.Organization, "GITLAB_URL": c.Gitlab.URL, "APP_KEY": c.AppKey, "SERVICE_TOKEN": c.ServiceToken} {
 		if value == "" {
 			return c, fmt.Errorf("missing %s", name)
 		}
 	}
-	if c.GitLabToken == "" && c.GitLabTokenFile == "" {
+	if c.Gitlab.Token == "" && c.Gitlab.TokenFile == "" {
 		return c, errors.New("GITLAB_TOKEN or GITLAB_TOKEN_FILE is required")
 	}
 	u, e := url.Parse(c.PublicURL)
