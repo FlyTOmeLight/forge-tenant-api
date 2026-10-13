@@ -1,6 +1,6 @@
 # Coding Agent 集成契约
 
-租户服务通过 HTTP 提供授权事实，不导出 Go 内部包。Coding Agent 业务由独立的 forge-coding-api 实现，运行时由 Agentic Kit 提供。
+租户服务通过 HTTP 提供授权事实，Go 调用方使用公开的 [`sdk/go/tenantv1`](../sdk/go/tenantv1/README.md)，不导入服务端内部包。Coding Agent 业务由独立的 forge-coding-api 实现，运行时由 Agentic Kit 提供。
 
 ## 操作前鉴权
 

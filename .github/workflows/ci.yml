@@ -23,10 +23,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: test -z "$(gofmt -l cmd internal)"
+      - run: test -z "$(gofmt -l cmd internal sdk)"
       - run: go test -tags=nomsgpack -race -count=1 ./...
       - run: go vet -tags=nomsgpack ./...
-      - run: go build -tags=nomsgpack ./cmd/forge
+      - run: go build -tags=nomsgpack ./cmd/server
       - uses: azure/setup-helm@v4.3.0
         with:
           version: v3.17.3

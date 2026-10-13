@@ -1,3 +1,52 @@
+## 2026-10-13：v0.8.0 发布
+
+发布 server-go 重构、完整职责拆分及 Go SDK。下文记录真实 PostgreSQL、浏览器 13 组和镜像验证结果。
+
+本机 `forge-tenant-split` 的后端 Helm release `forge-tenant` 已升级至 Chart / 应用版本 0.8.0（revision 29），API 与 Worker 使用已验收的 `forge-tenant-api:0.8.0` 镜像。两者均为 1/1 Ready，Worker 重启次数为 0，迁移初始化退出码为 0；发布后 `/healthz` 和 `/readyz` 均通过。前端及其他服务依赖未调整。
+
+## 2026-10-13：Go 服务调用 SDK
+
+提供 `sdk/go/tenantv1`，覆盖 CheckSession、CheckWorkspace、ResolveProject、CheckAccess 和 ListAccessEvents。SDK 复用发布版 server-go 的客户端与错误解码，默认 15 秒超时，不自动重试或跟随重定向；请求每次独立构造并携带 context，客户端由调用方关闭。服务端共用同一组请求和响应类型，原 JSON 字段及无项目授权时的响应保持不变。
+
+实际验证：
+
+- SDK HTTP 契约测试验证五个接口的方法、路径、Bearer、请求 JSON、响应类型和事件时间 / 游标；覆盖业务错误、框架错误、非 JSON 失败、非法成功响应、取消、超时、并发会话隔离和重定向拒绝。
+- SDK 通过真实 HTTPHost 与 PostgreSQL 调用五个接口，验证 CSRF、项目解析、角色权限、跨租户拒绝、移出成员后立即撤权、持久化事件和空的下一页。
+- 设置真实 TEST_DATABASE_URL，在 `GOWORK=off` 下全仓库 `go test -tags=nomsgpack -race -count=1 ./...` 通过，无数据库用例跳过；Go vet 和 git diff --check 通过。Docker 同步复制 sdk 目录，使用发布依赖以 CGO_ENABLED=0 构建实际镜像通过。
+
+SDK 随根模块 v0.8.0 交付，其他服务仓库的依赖未修改。接入示例与关闭、错误、游标责任见 [SDK 说明](../sdk/go/tenantv1/README.md)。
+
+## 2026-10-13：完整布局与职责拆分
+
+将上一轮框架接入继续拆分为 `cmd/server`、`internal/service`、`internal/app/tenant`、`internal/table` 和 `internal/client`。旧 `cmd/forge`、`internal/platform`、`internal/remote` 已移除，程序产物和部署命令仍为 `/forge`。CI、Docker、README 和项目规则的入口及测试路径同步更新。
+
+- Controller 只负责路由、HTTP 参数、Cookie / CSRF、状态与响应。租户 Service 接收 context、账号和领域参数，负责权限、事务、幂等、邀请、登录政策和同步编排。租户与项目管理资格、个人 / 多团队角色合并留在业务层。
+- Table 持有关键数据库记录类型、具名且参数有类型的查询、批量写入及迁移；数据库句柄或事务由调用方传入。两份迁移 SQL 文件与拆分前逐字节一致，没有数据库格式变更。
+- Client 持有 Casdoor / GitLab / OIDC 协议及 HTTP 传输配置。Resources 显式构造依赖并负责失败清理与退出释放，业务对象借用资源。
+- 结构检查确认 Controller 没有数据库操作，业务 Service 没有 HTTP 类型和内联 SQL；原有工作区授权改动及全部测试已迁移保留。
+- 在真实 PostgreSQL 中，全仓库 `GOWORK=off go test -tags=nomsgpack -race -count=1 ./...` 通过，无数据库用例跳过；Go vet、gofmt、git diff --check、Helm lint 通过。
+- 最终 Docker 镜像以 `CGO_ENABLED=0` 和发布版框架依赖构建通过。独立命名空间和 schema 中，新入口的 migrate、bootstrap、API、Worker、数据库 readinessProbe 以及完整浏览器验收 13 组通过。
+
+管理凭据元数据命令已通过实际容器调用验证；API 与 Worker 接收 SIGTERM 后均以退出码 0 结束。临时命名空间、schema、测试 GitLab Group 和新成员账号已清理，脱敏摘要保存在 `.local/layout-evidence/result.json`。
+
+上述隔离验收通过后纳入 v0.8.0 发布。
+
+## 2026-10-13：server-go 重构
+
+消费已发布的 `github.com/FlyTOmeLight/server-go v0.3.1`，没有本地 replace 或 workspace 依赖。配置、Bootstrap 资源初始化与回滚、HTTPHost 生命周期、请求 ID / 日志 / Recovery、JSON 绑定和内部 Bearer 鉴权接入框架；租户数据库结构、业务事务、持久化幂等、角色计算和 GitLab 同步保留。HTTP 边界继续返回既有错误格式。
+
+实际验证：
+
+- `GOWORK=off` 下，全仓库 `go test -tags=nomsgpack -race -count=1 ./...` 通过。设置真实 `TEST_DATABASE_URL`，数据库测试在独立 schema 中执行，无数据库用例跳过。
+- 新增配置快照、文件凭据、严格 JSON、Bearer 头、错误格式、Recovery 在响应提交前后行为的测试；Go vet、git diff --check 和 Helm lint 通过。
+- Docker 镜像以 `CGO_ENABLED=0` 构建通过，配置文件随 scratch 镜像交付；使用发布依赖完成构建。
+- 临时 namespace 与独立数据库 schema 中，真实 migrate、bootstrap、API、Worker 初始化及 readinessProbe 通过。API 与 Worker 收到 Kubernetes SIGTERM 后均以退出码 0 结束。
+- 使用前端仓库现有 `tests/e2e.cjs` 的临时副本，仅将请求和 Worker 控制指向隔离候选环境；真实 PostgreSQL / Casdoor / GitLab 验收 13 组通过。覆盖 OIDC、邀请激活、跨企业统一账号、多团队与个人授权、降权、Worker 停止与恢复、远端继承冲突和重试、停用恢复、幂等、CSRF、GitLab 单点登录、桌面与移动布局、持久化撤权事件。
+
+脱敏验收摘要保存于 `.local/server-go-evidence/result.json`。临时命名空间、schema、本轮新建的 GitLab Group 和成员账号已清理。
+
+当前常用环境未替换。配置默认路径改为 `conf/server/config.toml`，既有环境变量由占位符注入；`SERVER_CONFIG_PATH` 可覆盖路径。`/healthz` 使用框架进程探针，新增 `/readyz` 检查 PostgreSQL，Helm readinessProbe 同步调整。结构化 JSON 请求拒绝未知字段，内部服务请求必须提供完整 Bearer 头。当前租户 API 没有 SSE 或公开 Go SDK；任务与执行器仍属于独立服务，本次没有验证模型执行或执行器停止确认。
+
 ## 2026-10-05：Forge → GitLab 单点登录
 
 部署于 `forge-tenant-split`，API/Web 镜像为 `0.7.0-sso`。Forge 入口 `http://127.0.0.1:8483`，GitLab 入口 `http://127.0.0.1:18080`。GitLab 继续使用 Chart 10.4.1 / CE 19.4.1。

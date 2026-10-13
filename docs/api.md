@@ -110,3 +110,21 @@ GitLab 需将授权端点指向上述 Forge 登录页，并启用 `autoSignInWit
 项目目标角色取所有直接授权和团队授权中的最高等级。降低目标时立即压低有效能力；提高目标时等待当前版本 GitLab 确认。GitLab 接收计算后的每人项目角色；团队在 Forge 内管理，不额外创建具有继承权限的 GitLab Group。
 
 数据库版本 5 引入 `direct_grants`、`team_memberships`、`team_grants`。原 `grants` 保存聚合目标与远端确认结果，执行器继续读取同一条有效权限链路。迁移把已有正向项目授权保存为直接来源，把旧团队字段转成团队成员关系，再删除旧字段。重复迁移不会恢复已撤销的来源。移出租户清除其直接来源和所有团队关系；重新邀请不会恢复旧授权。
+
+### Enterprise Agent workspace authorization
+
+`POST /internal/v1/workspace/check` requires the configured service token and `{ "user_id": "...", "tenant_id": "..." }`. It returns `{allowed:true,canEdit:true,projects:[{id,name,level}]}` for an active enterprise member in an active enterprise. The project list only includes grants whose minimum desired/observed/effective level is at least 20. Enterprise membership does not grant repository access; platform operator status does not bypass membership. Missing or inactive membership returns 403. This endpoint does not synchronize or grant permissions.
+
+## server-go HTTP 接入
+
+业务路径、Cookie / CSRF、幂等键、租户版本、响应字段和 `{error:{code,message}}` 错误格式保持现有契约。内部接口使用 server-go Bearer 鉴权，须提供完整 `Authorization: Bearer <SERVICE_TOKEN>`；只传裸 token 会被拒绝。JSON 参数通过框架严格绑定，拒绝连续文档和结构化请求中的未知字段；请求体上限仍为 64 KiB。写操作保留原始请求字节用于幂等摘要。
+
+框架为请求生成或传递 `Request-ID`，记录方法、路由、状态与耗时。Recovery 在响应提交前返回 JSON 错误；提交后停止处理，不追加第二段错误响应。租户 API 提供 `sdk/go/tenantv1` Go SDK，覆盖五个内部服务接口；撤权事件仍通过 JSON 游标轮询读取，没有 SSE。
+
+`GET /healthz` 为进程探针，`GET /readyz` 为 PostgreSQL 就绪检查；数据库不可用时后者返回 503。`GET /ping` 和 `GET /version` 由 server-go 提供。
+
+## Go SDK
+
+导入 `github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1`，使用 `tenantv1.New(Config{Endpoint, ServiceToken, Timeout})` 构造客户端。方法与接口逐一对应：`CheckSession`、`CheckWorkspace`、`ResolveProject`、`CheckAccess`、`ListAccessEvents`。请求、响应类型由 SDK 与服务端共用，现有字段名称和无授权时的响应保持不变。
+
+`*tenantv1.Error` 保留实际 HTTP 状态、业务代码、消息和 Request-ID；网络与 context 错误保留错误身份。默认超时 15 秒，无自动重试或重定向。调用示例、资源关闭和游标责任见 [SDK 接入说明](../sdk/go/tenantv1/README.md)。

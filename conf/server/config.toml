@@ -1,0 +1,36 @@
+AppName = "forge-tenant"
+AppCode = 101
+RunMode = "release"
+
+[HTTPServer]
+Listen = "${env: LISTEN_ADDR::8080}"
+ReadTimeout = 30000
+WriteTimeout = 35000
+IdleTimeout = 60000
+APIBasePath = ""
+
+[Log]
+Level = "Info"
+[[Log.Outputs]]
+Type = "Console"
+
+[Forge]
+DatabaseURL = "${env: DATABASE_URL:}"
+PublicURL = "${env: PUBLIC_URL:}"
+Issuer = "${env: OIDC_ISSUER:}"
+ClientID = "${env: OIDC_CLIENT_ID:}"
+ClientSecret = "${env: OIDC_CLIENT_SECRET:}"
+CasdoorURL = "${env: CASDOOR_URL:}"
+CasdoorClient = "${env: CASDOOR_CLIENT_ID:}"
+CasdoorSecret = "${env: CASDOOR_SECRET:}"
+Organization = "${env: CASDOOR_ORGANIZATION:}"
+GitLabURL = "${env: GITLAB_URL:}"
+GitLabPublicURL = "${env: GITLAB_PUBLIC_URL:}"
+GitLabClientID = "${env: GITLAB_OIDC_CLIENT_ID:}"
+GitLabToken = "${env: GITLAB_TOKEN:}"
+GitLabTokenFile = "${env: GITLAB_TOKEN_FILE:}"
+BootstrapUser = "${env: BOOTSTRAP_USERNAME:}"
+AppKey = "${env: APP_KEY:}"
+ServiceToken = "${env: SERVICE_TOKEN:}"
+CAFile = "${env: CA_FILE:}"
+ModelURL = "${env: MODEL_URL:}"
