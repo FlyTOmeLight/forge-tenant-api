@@ -4,12 +4,13 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/FlyTOmeLight/server-go/db"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/tenant"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/config"
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
 
 // Resources constructs and owns infrastructure; tenant services borrow it.
@@ -18,8 +19,9 @@ type Resources struct {
 	Mode       string
 	Tenant     *tenant.Service
 	Controller *tenant.Controller
-	DB         *pgxpool.Pool
+	DB         *gorm.DB
 	transport  *http.Client
+	database   db.Module
 }
 
 func (s *Resources) Initialize(ctx context.Context) (err error) {
@@ -28,13 +30,18 @@ func (s *Resources) Initialize(ctx context.Context) (err error) {
 			_ = s.Close(context.WithoutCancel(ctx))
 		}
 	}()
-	s.DB, err = table.Open(ctx, s.Config.DatabaseURL)
+	s.database.Config = &db.Config{
+		Driver:       db.DriverPostgreSQL,
+		DSN:          s.Config.DatabaseURL,
+		MaxOpenConns: 12,
+		MaxIdleConns: 12,
+	}
+	err = s.database.Initialize(ctx)
 	if err != nil {
 		return err
 	}
-	if err = s.DB.Ping(ctx); err != nil {
-		return err
-	}
+	s.DB = s.database.DB
+	s.DB.Logger = gormlogger.Default.LogMode(gormlogger.Silent)
 	s.transport, err = client.NewHTTP(s.Config.CAFile)
 	if err != nil {
 		return err
@@ -67,16 +74,14 @@ func (s *Resources) Initialize(ctx context.Context) (err error) {
 	return nil
 }
 
-func (s *Resources) Close(context.Context) error {
+func (s *Resources) Close(ctx context.Context) error {
 	if s.transport != nil {
 		s.transport.CloseIdleConnections()
 		s.transport = nil
 	}
-	if s.DB != nil {
-		s.DB.Close()
-		s.DB = nil
-	}
+	err := s.database.Close(ctx)
+	s.DB = nil
 	s.Tenant = nil
 	s.Controller = nil
-	return nil
+	return err
 }

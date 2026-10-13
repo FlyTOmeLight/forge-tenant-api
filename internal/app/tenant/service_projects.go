@@ -4,12 +4,12 @@ import (
 	"context"
 	"regexp"
 
-	pgx "github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
 
-func (a *Service) addProject(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) addProject(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid, name, path, mode := r.TenantID, str(b, "name"), str(b, "path"), str(b, "mode")
 	if e := requireActive(ctx, tx, tid); e != nil {
 		return nil, e
@@ -27,7 +27,7 @@ func (a *Service) addProject(ctx context.Context, tx pgx.Tx, u User, r Change, b
 	return Object{"project_id": pid, "name": name, "path": slug + "/" + path, "mode": mode}, e
 }
 
-func (a *Service) setGrant(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) setGrant(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid, pid, mid := r.TenantID, r.ProjectID, r.MemberID
 	level := 0
 	if !r.Remove {
@@ -63,7 +63,7 @@ func (a *Service) setGrant(ctx context.Context, tx pgx.Tx, u User, r Change, b O
 	return Object{"project_id": pid, "membership_id": mid, "direct_role": grantRole(level)}, nil
 }
 
-func (a *Service) retryOperation(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) retryOperation(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	var ok bool
 	e := table.RetryableOperationExists(ctx, tx, r.TenantID, r.OperationID).
 		Scan(&ok)

@@ -4,12 +4,12 @@ import (
 	"context"
 	"regexp"
 
-	pgx "github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
 
-func (a *Service) createTenant(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) createTenant(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	name, slug, admin := str(b, "name"), str(b, "slug"), str(b, "admin_user_id")
 	if admin == "" {
 		return nil, problem(422, "ADMIN_REQUIRED", "请明确指定首位租户管理员")
@@ -33,7 +33,7 @@ func (a *Service) createTenant(ctx context.Context, tx pgx.Tx, u User, r Change,
 	return Object{"tenant_id": tid, "name": name, "slug": slug, "admin_user_id": admin}, e
 }
 
-func (a *Service) updateTenant(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) updateTenant(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	if !u.Operator {
 		return nil, problem(403, "FORBIDDEN", "仅平台运营可启用或停用企业")
 	}

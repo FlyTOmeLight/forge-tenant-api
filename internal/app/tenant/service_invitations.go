@@ -2,9 +2,8 @@ package tenant
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-
-	pgx "github.com/jackc/pgx/v5"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
@@ -18,7 +17,7 @@ func (a *Service) invitationInfo(ctx context.Context, in invitationInput) (Objec
 	var name, email, status, tenantName string
 	e := table.InspectInvitation(ctx, a.DB, Hash(in.Token)).
 		Scan(&name, &email, &status, &tenantName)
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, sql.ErrNoRows) {
 		return nil, problem(410, "INVITATION_EXPIRED", "邀请已失效，请联系企业管理员重新邀请")
 	}
 	if e != nil {
@@ -31,24 +30,25 @@ func (a *Service) acceptInvitation(ctx context.Context, in invitationInput, sess
 	var tid string
 	e := table.InvitationTenant(ctx, a.DB, Hash(in.Token)).
 		Scan(&tid)
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, sql.ErrNoRows) {
 		return nil, problem(410, "INVITATION_EXPIRED", "邀请已失效")
 	}
 	if e != nil {
 		return nil, e
 	}
-	tx, e := a.DB.Begin(ctx)
+	tx := a.DB.WithContext(ctx).Begin()
+	e = tx.Error
 	if e != nil {
 		return nil, e
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 	if _, e = table.LockTransaction(ctx, tx, "mutation:"+tid); e != nil {
 		return nil, e
 	}
 	record, e := table.LockInvitation(ctx, tx, Hash(in.Token))
 	inviteID, mid, uid, name, email, username, status := record.ID, record.MembershipID, record.UserID, record.Name, record.Email, record.Username, record.UserStatus
 
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, sql.ErrNoRows) {
 		return nil, problem(410, "INVITATION_EXPIRED", "邀请已失效或已使用")
 	}
 	if e != nil {
@@ -96,7 +96,7 @@ func (a *Service) acceptInvitation(ctx context.Context, in invitationInput, sess
 	if _, e = table.InsertInvitationAudit(ctx, tx, tid, uid, mid, op); e != nil {
 		return nil, e
 	}
-	if e = tx.Commit(ctx); e != nil {
+	if e = tx.Commit().Error; e != nil {
 		return nil, e
 	}
 	return Object{"accepted": true, "username": username, "operation_id": op, "version": version}, nil

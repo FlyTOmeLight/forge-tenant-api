@@ -74,16 +74,14 @@ func TestProjectPeopleAndAdministrativeCapabilities(t *testing.T) {
 			if test.admin {
 				role = "admin"
 			}
-			if _, e := f.a.DB.Exec(f.ctx, `UPDATE memberships SET role=$1 WHERE id='mm'`, role); e != nil {
+			if e := f.a.DB.WithContext(f.ctx).
+				Exec(`UPDATE memberships SET role=? WHERE id='mm'`, role).
+				Error; e != nil {
 				t.Fatal(e)
 			}
-			if _, e := f.a.DB.Exec(
-				f.ctx,
-				`UPDATE grants SET desired_level=$1,observed_level=$2,effective_level=$3 WHERE membership_id='mm'`,
-				test.desired,
-				test.observed,
-				test.effective,
-			); e != nil {
+			if e := f.a.DB.WithContext(f.ctx).
+				Exec(`UPDATE grants SET desired_level=?,observed_level=?,effective_level=? WHERE membership_id='mm'`, test.desired, test.observed, test.effective).
+				Error; e != nil {
 				t.Fatal(e)
 			}
 			code, out := f.call(t, f.member, "GET", "/api/v1/tenants/t", nil, 0, "")

@@ -2,16 +2,17 @@ package tenant
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/mail"
 	"strings"
 
-	pgx "github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
 
-func (a *Service) invitation(ctx context.Context, tx pgx.Tx, mid string) (string, error) {
+func (a *Service) invitation(ctx context.Context, tx *gorm.DB, mid string) (string, error) {
 	token := Token()
 	if _, e := table.InvalidateInvitations(ctx, tx, mid); e != nil {
 		return "", e
@@ -20,7 +21,7 @@ func (a *Service) invitation(ctx context.Context, tx pgx.Tx, mid string) (string
 	return a.Config.PublicURL + "/invite#" + token, e
 }
 
-func (a *Service) addMember(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) addMember(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid := r.TenantID
 	if e := requireActive(ctx, tx, tid); e != nil {
 		return nil, e
@@ -39,7 +40,7 @@ func (a *Service) addMember(ctx context.Context, tx pgx.Tx, u User, r Change, b 
 	}
 	var uid, status string
 	e = table.UserByEmail(ctx, tx, email).Scan(&uid, &status)
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, sql.ErrNoRows) {
 		uid = ID("u")
 		_, e = table.InsertInvitedUser(
 			ctx,
@@ -67,7 +68,7 @@ func (a *Service) addMember(ctx context.Context, tx pgx.Tx, u User, r Change, b 
 		}
 		mid = existing
 		_, e = table.ReinviteMembership(ctx, tx, mid, role)
-	} else if errors.Is(e, pgx.ErrNoRows) {
+	} else if errors.Is(e, sql.ErrNoRows) {
 		_, e = table.InsertMembership(ctx, tx, mid, tid, uid, role)
 	}
 	if e != nil {
@@ -84,7 +85,7 @@ func (a *Service) addMember(ctx context.Context, tx pgx.Tx, u User, r Change, b 
 	}, e
 }
 
-func (a *Service) updateMember(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) updateMember(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid, mid, role := r.TenantID, r.MemberID, str(b, "role")
 	if role != "admin" && role != "member" {
 		return nil, problem(422, "INVALID_ROLE", "角色无效")
@@ -97,7 +98,7 @@ func (a *Service) updateMember(ctx context.Context, tx pgx.Tx, u User, r Change,
 	var before string
 	if e := table.MembershipRole(ctx, tx, tid, mid).
 		Scan(&before); e != nil {
-		if errors.Is(e, pgx.ErrNoRows) {
+		if errors.Is(e, sql.ErrNoRows) {
 			return nil, problem(404, "NOT_FOUND", "成员不存在")
 		}
 		return nil, e
@@ -106,13 +107,13 @@ func (a *Service) updateMember(ctx context.Context, tx pgx.Tx, u User, r Change,
 	if e != nil {
 		return nil, e
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return nil, problem(404, "NOT_FOUND", "成员不存在")
 	}
 	return Object{"membership_id": mid, "before_role": before, "role": role}, nil
 }
 
-func (a *Service) removeMember(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) removeMember(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid, mid := r.TenantID, r.MemberID
 	if e := protectAdmin(ctx, tx, tid, mid); e != nil {
 		return nil, e
@@ -133,7 +134,7 @@ func (a *Service) removeMember(ctx context.Context, tx pgx.Tx, u User, r Change,
 	return Object{"membership_id": mid, "status": "removed", "global_account_preserved": true}, e
 }
 
-func (a *Service) resendInvitation(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) resendInvitation(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid, mid := r.TenantID, r.MemberID
 	if e := requireActive(ctx, tx, tid); e != nil {
 		return nil, e

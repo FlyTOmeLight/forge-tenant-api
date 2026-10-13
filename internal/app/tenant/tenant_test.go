@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	frameworkdb "github.com/FlyTOmeLight/server-go/db"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/config"
@@ -35,12 +37,12 @@ func setup(t *testing.T) *fixture {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	t.Cleanup(cancel)
-	conn, e := pgx.Connect(ctx, dsn)
+	conn, e := openTestDB(ctx, dsn)
 	if e != nil {
 		t.Fatal(e)
 	}
 	schema := "test_" + Token()[:16]
-	if _, e = conn.Exec(ctx, `CREATE SCHEMA `+schema); e != nil {
+	if e = conn.WithContext(ctx).Exec(`CREATE SCHEMA ` + schema).Error; e != nil {
 		t.Fatal(e)
 	}
 	parsed, e := url.Parse(dsn)
@@ -64,12 +66,12 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() {
-		a.DB.Close()
+		closeTestDB(a.DB)
 		a.Casdoor.HTTP.CloseIdleConnections()
 		cleanup, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
-		_, _ = conn.Exec(cleanup, `DROP SCHEMA `+schema+` CASCADE`)
-		_ = conn.Close(cleanup)
+		_ = conn.WithContext(cleanup).Exec(`DROP SCHEMA ` + schema + ` CASCADE`).Error
+		closeTestDB(conn)
 	})
 	if e = table.Migrate(ctx, a.DB); e != nil {
 		t.Fatal(e)
@@ -79,23 +81,15 @@ func setup(t *testing.T) *fixture {
 		id, token string
 		op        bool
 	}{{id: "operator", token: f.operator, op: true}, {id: "member", token: f.member, op: false}, {id: "other", token: f.other, op: false}} {
-		_, e = a.DB.Exec(
-			ctx,
-			`INSERT INTO users(id,issuer,subject,username,name,email,status,operator) VALUES($1,'https://identity.test',$1,$1,$1,$2,'active',$3)`,
-			item.id,
-			fmt.Sprintf("u%d@example.test", i),
-			item.op,
-		)
+		e = a.DB.WithContext(ctx).
+			Exec(`INSERT INTO users(id,issuer,subject,username,name,email,status,operator) VALUES(?,'https://identity.test',?,?,?,?,'active',?)`, item.id, item.id, item.id, item.id, fmt.Sprintf("u%d@example.test", i), item.op).
+			Error
 		if e != nil {
 			t.Fatal(e)
 		}
-		_, e = a.DB.Exec(
-			ctx,
-			`INSERT INTO sessions(token_hash,user_id,csrf_hash,expires_at) VALUES($1,$2,$3,now()+interval '1 hour')`,
-			Hash(item.token),
-			item.id,
-			Hash(Hash(item.token+":csrf")),
-		)
+		e = a.DB.WithContext(ctx).
+			Exec(`INSERT INTO sessions(token_hash,user_id,csrf_hash,expires_at) VALUES(?,?,?,now()+interval '1 hour')`, Hash(item.token), item.id, Hash(Hash(item.token+":csrf"))).
+			Error
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -217,34 +211,27 @@ func TestInvitationRequiresIntendedIdentityAndSingleUse(t *testing.T) {
 func TestAuthorizationIncreaseWaitsForCurrentConfirmation(t *testing.T) {
 	f := setup(t)
 	tid, v := f.tenant(t)
-	_, e := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('m',$1,'member','member','active');`,
-		tid,
-	)
+	e := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('m',?,'member','member','active');`, tid).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO projects(id,tenant_id,name,path,mode) VALUES('p',$1,'p','x/p','create')`,
-		tid,
-	)
+	e = f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO projects(id,tenant_id,name,path,mode) VALUES('p',?,'p','x/p','create')`, tid).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO grants(tenant_id,project_id,membership_id,desired_level,observed_level,effective_level) VALUES($1,'p','m',20,20,20)`,
-		tid,
-	)
+	e = f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO grants(tenant_id,project_id,membership_id,desired_level,observed_level,effective_level) VALUES(?,'p','m',20,20,20)`, tid).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, err := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0 ON CONFLICT DO NOTHING`,
-	); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0 ON CONFLICT DO NOTHING`).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	path := "/api/v1/tenants/" + tid + "/projects/p/grants/m"
@@ -302,16 +289,16 @@ func TestAuthorizationIncreaseWaitsForCurrentConfirmation(t *testing.T) {
 func TestConcurrentAdminRemovalPreservesLastAdmin(t *testing.T) {
 	f := setup(t)
 	tid, v := f.tenant(t)
-	_, e := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('second',$1,'member','admin','active')`,
-		tid,
-	)
+	e := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('second',?,'member','admin','active')`, tid).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}
 	var original string
-	if e = f.a.DB.QueryRow(f.ctx, `SELECT id FROM memberships WHERE tenant_id=$1 AND user_id='operator'`, tid).
+	if e = f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT id FROM memberships WHERE tenant_id=? AND user_id='operator'`, tid).
+		Row().
 		Scan(&original); e != nil {
 		t.Fatal(e)
 	}
@@ -341,7 +328,9 @@ func TestConcurrentAdminRemovalPreservesLastAdmin(t *testing.T) {
 		t.Fatal("concurrent mutations were not serialized")
 	}
 	var remaining string
-	if e = f.a.DB.QueryRow(f.ctx, `SELECT id FROM memberships WHERE tenant_id=$1 AND status='active' AND role='admin'`, tid).
+	if e = f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT id FROM memberships WHERE tenant_id=? AND status='active' AND role='admin'`, tid).
+		Row().
 		Scan(&remaining); e != nil {
 		t.Fatal(e)
 	}
@@ -364,7 +353,7 @@ func TestCSRFAndDisabledSession(t *testing.T) {
 	if w.Code != 403 {
 		t.Fatal("CSRF not rejected", w.Code)
 	}
-	_, e := f.a.DB.Exec(f.ctx, `UPDATE users SET status='disabled' WHERE id='member'`)
+	e := f.a.DB.WithContext(f.ctx).Exec(`UPDATE users SET status='disabled' WHERE id='member'`).Error
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -396,34 +385,27 @@ func TestRetryClassification(t *testing.T) {
 func TestProjectAdminCannotManageOtherProjectsOrEnterprise(t *testing.T) {
 	f := setup(t)
 	tid, v := f.tenant(t)
-	_, e := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('m',$1,'member','member','active'),('otherm',$1,'other','member','active')`,
-		tid,
-	)
+	e := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('m',?,'member','member','active'),('otherm',?,'other','member','active')`, tid, tid).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO projects(id,tenant_id,name,path,mode) VALUES('p',$1,'p','scope/p','create'),('otherp',$1,'other','scope/other','create')`,
-		tid,
-	)
+	e = f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO projects(id,tenant_id,name,path,mode) VALUES('p',?,'p','scope/p','create'),('otherp',?,'other','scope/other','create')`, tid, tid).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO grants(tenant_id,project_id,membership_id,desired_level,observed_level,effective_level) VALUES($1,'p','m',40,40,40)`,
-		tid,
-	)
+	e = f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO grants(tenant_id,project_id,membership_id,desired_level,observed_level,effective_level) VALUES(?,'p','m',40,40,40)`, tid).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, err := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0 ON CONFLICT DO NOTHING`,
-	); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0 ON CONFLICT DO NOTHING`).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	code, b := f.call(t, f.member, "GET", "/api/v1/tenants/"+tid+"/projects/p/grant-candidates", nil, 0, "")
@@ -461,13 +443,13 @@ func TestProjectAdminCannotManageOtherProjectsOrEnterprise(t *testing.T) {
 }
 
 func newTestService(ctx context.Context, c config.Config) (*Service, error) {
-	db, err := table.Open(ctx, c.DatabaseURL)
+	db, err := openTestDB(ctx, c.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}
 	transport, err := client.NewHTTP(c.CAFile)
 	if err != nil {
-		db.Close()
+		closeTestDB(db)
 		return nil, err
 	}
 	service, err := New(
@@ -484,8 +466,26 @@ func newTestService(ctx context.Context, c config.Config) (*Service, error) {
 		&client.OIDC{HTTP: transport},
 	)
 	if err != nil {
-		db.Close()
+		closeTestDB(db)
 		transport.CloseIdleConnections()
 	}
 	return service, err
+}
+
+func openTestDB(ctx context.Context, dsn string) (*gorm.DB, error) {
+	database, err := frameworkdb.NewDB(
+		ctx,
+		&frameworkdb.Config{Driver: frameworkdb.DriverPostgreSQL, DSN: dsn, MaxOpenConns: 12, MaxIdleConns: 12},
+	)
+	if err == nil {
+		database.Logger = gormlogger.Default.LogMode(gormlogger.Silent)
+	}
+	return database, err
+}
+
+func closeTestDB(db *gorm.DB) {
+	connection, err := db.DB()
+	if err == nil {
+		_ = connection.Close()
+	}
 }

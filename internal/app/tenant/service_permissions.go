@@ -2,9 +2,10 @@ package tenant
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
-	pgx "github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
@@ -123,17 +124,17 @@ func projectRoleLevel(role string) int {
 	return map[string]int{"reviewer": 20, "developer": 30, "admin": 40}[role]
 }
 
-func canManage(ctx context.Context, db table.RowReader, u User, tid string) (bool, error) {
+func canManage(ctx context.Context, db *gorm.DB, u User, tid string) (bool, error) {
 	record, err := table.TenantMemberState(ctx, db, tid, u.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return record.Role == "admin" && record.Status == "active", err
 }
 
-func grantManager(ctx context.Context, db table.RowReader, u User, tid, pid string) (bool, error) {
+func grantManager(ctx context.Context, db *gorm.DB, u User, tid, pid string) (bool, error) {
 	record, err := table.ProjectMemberState(ctx, db, tid, pid, u.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	active := record.TenantStatus == "active" && record.MemberStatus == "active" && record.UserStatus == "active"
@@ -143,7 +144,7 @@ func grantManager(ctx context.Context, db table.RowReader, u User, tid, pid stri
 func (a *Service) access(ctx context.Context, uid, tid, pid string) (Object, error) {
 	record, e := table.ProjectAuthorization(ctx, a.DB, tid, pid, uid)
 
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, sql.ErrNoRows) {
 		return Object{"allowed": false, "level": 0, "reason": "NO_GRANT"}, nil
 	}
 	if e != nil {
@@ -166,7 +167,7 @@ func (a *Service) access(ctx context.Context, uid, tid, pid string) (Object, err
 }
 
 // Source roles are combined in the business layer, inside the caller's transaction.
-func recomputeGrants(ctx context.Context, tx pgx.Tx, tid string) error {
+func recomputeGrants(ctx context.Context, tx *gorm.DB, tid string) error {
 	sources, err := table.LoadGrantSources(ctx, tx, tid)
 	if err != nil {
 		return err

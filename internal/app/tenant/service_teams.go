@@ -3,12 +3,12 @@ package tenant
 import (
 	"context"
 
-	pgx "github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
 
-func (a *Service) setTeamMember(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) setTeamMember(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid, team, mid := r.TenantID, r.TeamID, r.MemberID
 	var ok bool
 	err := table.TeamMemberTargetExists(ctx, tx, tid, team, mid, r.Remove).
@@ -33,7 +33,7 @@ func (a *Service) setTeamMember(ctx context.Context, tx pgx.Tx, u User, r Change
 	return Object{"team_id": team, "membership_id": mid, "removed": r.Remove}, nil
 }
 
-func (a *Service) setTeamGrant(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) setTeamGrant(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	tid, pid, team := r.TenantID, r.ProjectID, r.TeamID
 	level := projectRoleLevel(str(b, "role"))
 	if !r.Remove && level == 0 {
@@ -62,7 +62,7 @@ func (a *Service) setTeamGrant(ctx context.Context, tx pgx.Tx, u User, r Change,
 	return Object{"project_id": pid, "team_id": team, "role": grantRole(level), "removed": r.Remove}, nil
 }
 
-func (a *Service) createTeam(ctx context.Context, tx pgx.Tx, u User, r Change, b Object) (Object, error) {
+func (a *Service) createTeam(ctx context.Context, tx *gorm.DB, u User, r Change, b Object) (Object, error) {
 	name := str(b, "name")
 	if !validName(name) {
 		return nil, problem(422, "INVALID_NAME", "团队名称必填，最长 80 字")

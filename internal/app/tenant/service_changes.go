@@ -2,13 +2,13 @@ package tenant
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 
-	pgx "github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
@@ -25,7 +25,7 @@ type Receipt struct {
 	Data   []byte
 }
 
-type mutation func(context.Context, pgx.Tx, User, Change, Object) (Object, error)
+type mutation func(context.Context, *gorm.DB, User, Change, Object) (Object, error)
 
 func (a *Service) change(
 	ctx context.Context,
@@ -42,11 +42,12 @@ func (a *Service) change(
 	if key == "" || len(key) > 128 {
 		return Receipt{}, problem(400, "IDEMPOTENCY_KEY_REQUIRED", "请提供 1–128 字符的 Idempotency-Key")
 	}
-	tx, e := a.DB.Begin(ctx)
+	tx := a.DB.WithContext(ctx).Begin()
+	e := tx.Error
 	if e != nil {
 		return Receipt{}, e
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 	lock := tid
 	if lock == "" {
 		lock = "create-tenant"
@@ -93,13 +94,13 @@ func (a *Service) change(
 		}
 		return Receipt{Status: oldCode, Data: decoded}, nil
 	}
-	if !errors.Is(e, pgx.ErrNoRows) {
+	if !errors.Is(e, sql.ErrNoRows) {
 		return Receipt{}, e
 	}
 	if tid != "" {
 		var version int64
 		e = table.TenantVersion(ctx, tx, tid).Scan(&version)
-		if errors.Is(e, pgx.ErrNoRows) {
+		if errors.Is(e, sql.ErrNoRows) {
 			return Receipt{}, problem(404, "NOT_FOUND", "企业不存在")
 		}
 		if e != nil {
@@ -112,8 +113,9 @@ func (a *Service) change(
 	}
 	result, e := fn(ctx, tx, u, r, body)
 	if e != nil {
-		var pg *pgconn.PgError
-		if errors.As(e, &pg) && (pg.Code == "23505" || pg.Code == "23503" || pg.Code == "23514") {
+		var pg interface{ SQLState() string }
+		if errors.As(e, &pg) &&
+			(pg.SQLState() == "23505" || pg.SQLState() == "23503" || pg.SQLState() == "23514") {
 			e = problem(409, "RESOURCE_CONFLICT", "资源已存在或关联关系无效")
 		}
 		return Receipt{}, e
@@ -150,7 +152,7 @@ func (a *Service) change(
 	if _, e = table.InsertIdempotency(ctx, tx, u.ID, key, route, digest, a.seal(data)); e != nil {
 		return Receipt{}, e
 	}
-	if e = tx.Commit(ctx); e != nil {
+	if e = tx.Commit().Error; e != nil {
 		return Receipt{}, e
 	}
 	return Receipt{Status: 202, Data: data}, nil
@@ -160,7 +162,7 @@ func str(o Object, k string) string { s, _ := o[k].(string); return strings.Trim
 
 func validName(s string) bool { return len([]rune(s)) > 0 && len([]rune(s)) <= 80 }
 
-func enqueue(ctx context.Context, tx pgx.Tx, tid string) (string, int64, error) {
+func enqueue(ctx context.Context, tx *gorm.DB, tid string) (string, int64, error) {
 	var v int64
 	e := table.AdvanceTenantVersion(ctx, tx, tid).Scan(&v)
 	if e != nil {
@@ -175,7 +177,7 @@ func enqueue(ctx context.Context, tx pgx.Tx, tid string) (string, int64, error) 
 	return id, v, e
 }
 
-func requireActive(ctx context.Context, tx pgx.Tx, tid string) error {
+func requireActive(ctx context.Context, tx *gorm.DB, tid string) error {
 	var active bool
 	e := table.TenantActive(ctx, tx, tid).Scan(&active)
 	if e != nil {
@@ -187,11 +189,11 @@ func requireActive(ctx context.Context, tx pgx.Tx, tid string) error {
 	return nil
 }
 
-func protectAdmin(ctx context.Context, tx pgx.Tx, tid, mid string) error {
+func protectAdmin(ctx context.Context, tx *gorm.DB, tid, mid string) error {
 	var role, status string
 	e := table.MembershipState(ctx, tx, tid, mid).
 		Scan(&role, &status)
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, sql.ErrNoRows) {
 		return problem(404, "NOT_FOUND", "成员不存在")
 	}
 	if e != nil {

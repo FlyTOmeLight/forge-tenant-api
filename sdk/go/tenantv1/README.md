@@ -48,4 +48,4 @@ HTTP 失败返回 `*tenantv1.Error`，通过 `errors.As` 读取 `Status`、`Code
 
 身份须来自已验证会话或任务责任链。`CheckAccess` 的 `Allowed=false` 是一次成功查询得到的拒绝结果；接口不可达也应拒绝敏感操作。消费撤权事件时，调用方在成功处理后持久化最后一条事件 ID，SDK 不自动翻页、确认事件或停止执行器。
 
-SDK 随本仓库根模块交付，没有独立 go.mod。使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.8.0` 安装。
+SDK 随本仓库根模块交付，没有独立 go.mod。使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.8.1` 安装。

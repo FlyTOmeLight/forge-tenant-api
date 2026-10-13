@@ -1,3 +1,14 @@
+## 2026-10-13：v0.8.1 数据库框架迁移
+
+数据库连接与关闭改由发布版 `server-go v0.3.2` 的 `db.Module` 管理；框架新增 `db.Config.DSN`，原样保留 PostgreSQL URL 的 TLS、search_path、时区和驱动参数。租户 Table 查询、写入、迁移和业务事务使用 GORM，删除原 pgxpool 装配与 pgx 查询接口。同步 Worker 使用 GORM `Connection` 固定会话锁连接；解锁失败时丢弃该连接，避免锁留在池内。表结构、迁移 SQL、HTTP / SDK 契约不变。
+
+- 框架 `make check` 通过，覆盖根模块与独立示例、race、生成项目和真实 HTTP / SIGTERM；DSN 测试确认 URL 和连接字符串参数保留。
+- 关闭 workspace、移除 replace，使用可下载的 server-go v0.3.2 在真实 PostgreSQL 中运行全仓库 `go test -tags=nomsgpack -race -count=1 ./...`，无数据库跳过；事务回滚、取消、会话锁独占及释放新增验证通过。Go vet、gofmt / gorgeous、git diff --check、Helm lint 和 CGO_ENABLED=0 scratch 镜像构建通过。
+- 独立 namespace / schema 中 migrate、bootstrap、API、Worker、数据库探针通过；真实 Casdoor / GitLab 浏览器验收 13 组通过。首轮降权确认时 GitLab 短暂返回旧权限 40，随后直接与有效权限均为 20；本地立即降到 20，完整流程第二次通过，未改动同步冲突判定或添加重试。
+- API 与 Worker 的实际 SIGTERM 退出码均为 0；本轮测试 Group、账号、schema 和 namespace 已清理，脱敏摘要见 `.local/gorm-evidence/result.json`。
+
+正式 `forge-tenant-split` 后端 Helm release 已升级至 0.8.1（revision 31），API / Worker 均 1/1 Ready，发布后 `/healthz` 与 `/readyz` 通过。
+
 ## 2026-10-13：v0.8.0 发布
 
 发布 server-go 重构、完整职责拆分及 Go SDK。下文记录真实 PostgreSQL、浏览器 13 组和镜像验证结果。

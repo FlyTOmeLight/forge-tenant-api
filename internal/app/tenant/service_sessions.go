@@ -2,9 +2,8 @@ package tenant
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-
-	pgx "github.com/jackc/pgx/v5"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
@@ -23,7 +22,7 @@ func (a *Service) authenticate(ctx context.Context, session string) (User, strin
 		Subject:  record.Subject,
 	}
 
-	if errors.Is(e, pgx.ErrNoRows) {
+	if errors.Is(e, sql.ErrNoRows) {
 		return u, "", problem(401, "AUTH_REQUIRED", "会话已过期，请重新登录")
 	}
 	return u, Hash(session + ":csrf"), e

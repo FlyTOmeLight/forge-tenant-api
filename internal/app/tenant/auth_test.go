@@ -16,12 +16,9 @@ func TestLoginProxyPreservesIdentitySession(t *testing.T) {
 	a.Config.ClientID = "forge-client"
 	a.Identity.OAuth = oauth2.Config{RedirectURL: a.Config.PublicURL + "/auth/callback"}
 	flow, state := Token(), Token()
-	_, err := a.DB.Exec(
-		f.ctx,
-		`INSERT INTO login_flows(token_hash,state_hash,nonce,verifier,return_path,expires_at) VALUES($1,$2,'nonce','verifier','/',now()+interval '10 minutes')`,
-		Hash(flow),
-		Hash(state),
-	)
+	err := a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO login_flows(token_hash,state_hash,nonce,verifier,return_path,expires_at) VALUES(?,?,'nonce','verifier','/',now()+interval '10 minutes')`, Hash(flow), Hash(state)).
+		Error
 	if err != nil {
 		t.Fatal(err)
 	}

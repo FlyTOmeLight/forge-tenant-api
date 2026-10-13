@@ -1,6 +1,6 @@
 # Forge 租户 API
 
-基于 server-go v0.3.1 的独立 Go 后端，管理企业、统一账号、成员、项目授权和同步队列，并对接 Casdoor 与 GitLab CE。配套 Vue 控制台在 [forge-tenant-web](https://github.com/FlyTOmeLight/forge-tenant-web)。后端只提供 API 和认证回调，不编译或服务前端页面。
+基于 server-go v0.3.2 的独立 Go 后端，管理企业、统一账号、成员、项目授权和同步队列，并对接 Casdoor 与 GitLab CE。配套 Vue 控制台在 [forge-tenant-web](https://github.com/FlyTOmeLight/forge-tenant-web)。后端只提供 API 和认证回调，不编译或服务前端页面。
 
 ## 目录与 HTTP 层
 
@@ -25,6 +25,8 @@ docs/               API 与 Agent 集成契约
 
 `tenant.Controller` 实现 `host.Service`，通过 `RegisterRoutes` 安装业务路由，调用 `tenant.Service` 完成业务操作。Controller 提取路径、版本、幂等键和请求体，不直接操作数据库；Service 接收 context、账号和领域参数，不接收 HTTP 请求或响应对象。Table 接收数据库或事务句柄，负责记录查询和写入；业务事务、权限判断和 GitLab 同步编排留在 Service。`internal/service.Resources` 构造数据库、HTTP 传输、外部客户端与业务对象，并通过 Bootstrap 负责部分初始化失败的清理和退出释放。
 
+数据库连接由 `server-go/db.Module` 管理，Table 使用 GORM 的 `WithContext`、`Raw` / `Exec` 执行查询与写入，业务层使用 GORM 事务。`DATABASE_URL` 原样传给框架 DSN，连接池上限为 12；同步 Worker 使用 GORM `Connection` 固定会话锁连接。表结构与版本化 SQL 迁移保留，不使用 AutoMigrate。
+
 server-go 管理配置快照、HTTPHost 启动与排空、请求 ID、日志、Recovery、严格 JSON 绑定和服务 Bearer 鉴权。Controller 在 HTTP 边界将领域及框架错误映射为既有 `{error:{code,message}}` 格式。租户幂等结果仍与业务、审计和 outbox 一起写入 PostgreSQL。
 
 默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[Forge]` 保留既有环境变量名称，`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。配置在启动时读取；调整后重启对应进程。API 收到退出信号后由 HTTPHost 排空请求，再由 Bootstrap 关闭数据库和外部 HTTP 空闲连接；Worker 取消并完成当前操作的结果持久化后释放资源。
@@ -45,7 +47,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ## 服务调用 SDK
 
-可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用会话校验、租户工作区、项目解析、项目权限和撤权事件接口。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.8.0 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.8.0` 安装。
+可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用会话校验、租户工作区、项目解析、项目权限和撤权事件接口。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.8.1 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.8.1` 安装。
 
 ## Kubernetes / Helm
 
@@ -55,7 +57,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ```sh
 python3 scripts/prepare-lab.py --lab-config /path/to/infra.json --kubectl /path/to/kubectl
-FORGE_IMAGE_TAG=0.8.0 ./scripts/deploy-lab.sh
+FORGE_IMAGE_TAG=0.8.1 ./scripts/deploy-lab.sh
 ```
 
 本机部署统一使用 namespace `forge-tenant-split`。后端 Helm release 为 `forge-tenant`，前端独立 release 为 `forge-tenant-web`。浏览器入口通过前端 Service 提供：

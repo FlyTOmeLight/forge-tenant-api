@@ -10,10 +10,9 @@ import (
 
 func setupProject(t *testing.T) *fixture {
 	f := setup(t)
-	_, e := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO tenants(id,name,slug,status) VALUES('t','Tenant','task-test','active'); INSERT INTO projects(id,tenant_id,name,path,mode,gitlab_id) VALUES('p','t','Repo','task-test/repo','bind',77); INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('ma','t','operator','admin','active'),('mm','t','member','member','active'); INSERT INTO grants(tenant_id,project_id,membership_id,desired_level,observed_level,effective_level) VALUES('t','p','ma',40,40,40),('t','p','mm',30,30,30);INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0`,
-	)
+	e := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO tenants(id,name,slug,status) VALUES('t','Tenant','task-test','active'); INSERT INTO projects(id,tenant_id,name,path,mode,gitlab_id) VALUES('p','t','Repo','task-test/repo','bind',77); INSERT INTO memberships(id,tenant_id,user_id,role,status) VALUES('ma','t','operator','admin','active'),('mm','t','member','member','active'); INSERT INTO grants(tenant_id,project_id,membership_id,desired_level,observed_level,effective_level) VALUES('t','p','ma',40,40,40),('t','p','mm',30,30,30);INSERT INTO direct_grants SELECT tenant_id,project_id,membership_id,desired_level FROM grants WHERE desired_level>0`).
+		Error
 	if e != nil {
 		t.Fatal(e)
 	}

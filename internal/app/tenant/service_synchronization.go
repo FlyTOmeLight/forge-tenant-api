@@ -2,13 +2,14 @@ package tenant
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"math/rand/v2"
 	"time"
 
 	"github.com/FlyTOmeLight/server-go/logger"
-	pgx "github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
@@ -38,11 +39,12 @@ func (a *Service) RunWorker(ctx context.Context) error {
 }
 
 func (a *Service) reconcile(ctx context.Context) error {
-	tx, e := a.DB.Begin(ctx)
+	tx := a.DB.WithContext(ctx).Begin()
+	e := tx.Error
 	if e != nil {
 		return e
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 	_, e = table.RescheduleReconciliation(ctx, tx)
 	if e != nil {
 		return e
@@ -57,82 +59,82 @@ func (a *Service) reconcile(ctx context.Context) error {
 	if _, e = table.PruneIdempotency(ctx, tx); e != nil {
 		return e
 	}
-	return tx.Commit(ctx)
+	return tx.Commit().Error
 }
 
 func (a *Service) runNext(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
-	conn, e := a.DB.Acquire(ctx)
-	if e != nil {
-		return e
-	}
-	defer conn.Release()
-	candidate, e := table.NextOperation(ctx, conn)
-	oid, tid, version := candidate.ID, candidate.TenantID, candidate.Version
+	return a.DB.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		candidate, e := table.NextOperation(ctx, conn)
+		oid, tid, version := candidate.ID, candidate.TenantID, candidate.Version
 
-	if errors.Is(e, pgx.ErrNoRows) {
-		return nil
-	}
-	if e != nil {
-		return e
-	}
-	var locked bool
-	e = table.TrySessionLock(ctx, conn, "sync:"+tid).Scan(&locked)
-	if e != nil || !locked {
-		return e
-	}
-	defer func() {
-		cleanup, done := context.WithTimeout(context.Background(), 5*time.Second)
+		if errors.Is(e, sql.ErrNoRows) {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		var locked bool
+		e = table.TrySessionLock(ctx, conn, "sync:"+tid).Scan(&locked)
+		if e != nil || !locked {
+			return e
+		}
+		defer func() {
+			cleanup, done := context.WithTimeout(context.Background(), 5*time.Second)
+			defer done()
+			if _, err := table.UnlockSession(cleanup, conn, "sync:"+tid); err != nil {
+				_ = conn.Statement.ConnPool.(*sql.Conn).Raw(
+					func(any) error { return driver.ErrBadConn },
+				)
+			}
+		}()
+		var attempts int
+		e = table.ClaimOperation(ctx, conn, oid).
+			Scan(&attempts)
+		if errors.Is(e, sql.ErrNoRows) {
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		e = a.synchronize(ctx, conn, tid, version)
+		status, code, message, delay := syncResult(e, attempts)
+		// The job context may have timed out; persist the result with a fresh bounded context.
+		finish, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
-		if _, err := table.UnlockSession(cleanup, conn, "sync:"+tid); err != nil {
-			_ = conn.Conn().Close(cleanup)
+		tx := a.DB.WithContext(finish).Begin()
+		dbErr := tx.Error
+		if dbErr != nil {
+			return dbErr
 		}
-	}()
-	var attempts int
-	e = table.ClaimOperation(ctx, conn, oid).
-		Scan(&attempts)
-	if errors.Is(e, pgx.ErrNoRows) {
+		defer tx.Rollback()
+		tag, dbErr := table.FinishOperation(finish, tx, oid, status, code, message, delay.Seconds())
+		if dbErr != nil {
+			return dbErr
+		}
+		if tag > 0 && status == "succeeded" {
+			if _, dbErr = table.MarkTenantChecked(finish, tx, tid, version); dbErr != nil {
+				return dbErr
+			}
+			if _, dbErr = table.InsertSyncAudit(finish, tx, tid, tid, version, oid); dbErr != nil {
+				return dbErr
+			}
+		}
+		if dbErr = tx.Commit().Error; dbErr != nil {
+			return dbErr
+		}
+		logger.Infof(
+			parent,
+			"sync finished operation_id=%s tenant_id=%s version=%d status=%s error_code=%s",
+			oid,
+			tid,
+			version,
+			status,
+			code,
+		)
 		return nil
-	}
-	if e != nil {
-		return e
-	}
-	e = a.synchronize(ctx, conn, tid, version)
-	status, code, message, delay := syncResult(e, attempts)
-	// The job context may have timed out; persist the result with a fresh bounded context.
-	finish, done := context.WithTimeout(context.Background(), 5*time.Second)
-	defer done()
-	tx, dbErr := a.DB.Begin(finish)
-	if dbErr != nil {
-		return dbErr
-	}
-	defer tx.Rollback(finish)
-	tag, dbErr := table.FinishOperation(finish, tx, oid, status, code, message, delay.Seconds())
-	if dbErr != nil {
-		return dbErr
-	}
-	if tag.RowsAffected() > 0 && status == "succeeded" {
-		if _, dbErr = table.MarkTenantChecked(finish, tx, tid, version); dbErr != nil {
-			return dbErr
-		}
-		if _, dbErr = table.InsertSyncAudit(finish, tx, tid, tid, version, oid); dbErr != nil {
-			return dbErr
-		}
-	}
-	if dbErr = tx.Commit(finish); dbErr != nil {
-		return dbErr
-	}
-	logger.Infof(
-		parent,
-		"sync finished operation_id=%s tenant_id=%s version=%d status=%s error_code=%s",
-		oid,
-		tid,
-		version,
-		status,
-		code,
-	)
-	return nil
+	})
 }
 
 func syncResult(err error, attempts int) (status, code, message string, delay time.Duration) {
@@ -181,7 +183,7 @@ func (a *Service) currentVersion(ctx context.Context, tid string, v int64) error
 	return nil
 }
 
-func (a *Service) synchronize(ctx context.Context, conn *pgxpool.Conn, tid string, version int64) error {
+func (a *Service) synchronize(ctx context.Context, conn *gorm.DB, tid string, version int64) error {
 	if e := a.currentVersion(ctx, tid, version); e != nil {
 		return e
 	}
@@ -222,7 +224,7 @@ func (a *Service) synchronize(ctx context.Context, conn *pgxpool.Conn, tid strin
 		_, unlockErr := table.UnlockSession(cleanup, conn, "identity-sync:"+uid)
 		done()
 		if unlockErr != nil {
-			_ = conn.Conn().Close(context.Background())
+			_ = conn.Statement.ConnPool.(*sql.Conn).Raw(func(any) error { return driver.ErrBadConn })
 			return unlockErr
 		}
 		if remoteErr != nil {
@@ -266,7 +268,7 @@ func (a *Service) synchronize(ctx context.Context, conn *pgxpool.Conn, tid strin
 		if e = a.currentVersion(ctx, tid, version); e != nil {
 			return e
 		}
-		desired := int(g["desired_level"].(int32))
+		desired := int(g["desired_level"].(int64))
 		if status != "active" || g["member_status"] != "active" || g["user_status"] != "active" {
 			desired = 0
 		}
@@ -310,11 +312,12 @@ func (a *Service) recordAccess(
 	actual int,
 	confirmed bool,
 ) error {
-	tx, e := a.DB.Begin(ctx)
+	tx := a.DB.WithContext(ctx).Begin()
+	e := tx.Error
 	if e != nil {
 		return e
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 	if _, e = table.LockTransaction(ctx, tx, "mutation:"+tid); e != nil {
 		return e
 	}
@@ -326,5 +329,5 @@ func (a *Service) recordAccess(
 	if e != nil {
 		return e
 	}
-	return tx.Commit(ctx)
+	return tx.Commit().Error
 }

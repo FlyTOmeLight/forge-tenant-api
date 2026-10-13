@@ -9,7 +9,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/config"
@@ -27,7 +27,7 @@ type User struct {
 }
 
 type Service struct {
-	DB       *pgxpool.Pool
+	DB       *gorm.DB
 	Config   config.Config
 	Casdoor  *client.Casdoor
 	GitLab   *client.GitLab
@@ -36,7 +36,7 @@ type Service struct {
 }
 
 func New(
-	db *pgxpool.Pool,
+	db *gorm.DB,
 	c config.Config,
 	casdoor *client.Casdoor,
 	gitlab *client.GitLab,
@@ -97,4 +97,10 @@ func (a *Service) open(b []byte) ([]byte, error) {
 	return a.cipher.Open(nil, b[:n], b[n:], nil)
 }
 
-func (a *Service) Readiness(ctx context.Context) error { return a.DB.Ping(ctx) }
+func (a *Service) Readiness(ctx context.Context) error {
+	connection, err := a.DB.DB()
+	if err != nil {
+		return err
+	}
+	return connection.PingContext(ctx)
+}

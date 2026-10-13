@@ -42,11 +42,11 @@ type ProjectMember struct {
 }
 
 type GrantSource struct {
-	ProjectID    string `db:"project_id"`
-	MembershipID string `db:"membership_id"`
-	Level        int    `db:"level"`
-	Status       string `db:"status"`
-	Effective    int    `db:"effective_level"`
+	ProjectID    string `gorm:"column:project_id"`
+	MembershipID string `gorm:"column:membership_id"`
+	Level        int    `gorm:"column:level"`
+	Status       string `gorm:"column:status"`
+	Effective    int    `gorm:"column:effective_level"`
 }
 
 type ComputedGrant struct {

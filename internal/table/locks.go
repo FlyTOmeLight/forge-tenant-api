@@ -2,23 +2,26 @@ package table
 
 import (
 	"context"
+	"database/sql"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/gorm"
 )
 
-func LockTransaction(ctx context.Context, db Writer, lockKey string) (pgconn.CommandTag, error) {
-	return db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, lockKey)
+func LockTransaction(ctx context.Context, db *gorm.DB, lockKey string) (int64, error) {
+	result := db.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?,0))`, lockKey)
+	return result.RowsAffected, result.Error
 }
 
-func UnlockSession(ctx context.Context, db Writer, lockKey string) (pgconn.CommandTag, error) {
-	return db.Exec(ctx, `SELECT pg_advisory_unlock(hashtextextended($1,0))`, lockKey)
+func UnlockSession(ctx context.Context, db *gorm.DB, lockKey string) (int64, error) {
+	result := db.WithContext(ctx).Exec(`SELECT pg_advisory_unlock(hashtextextended(?,0))`, lockKey)
+	return result.RowsAffected, result.Error
 }
 
-func LockSession(ctx context.Context, db Writer, lockKey string) (pgconn.CommandTag, error) {
-	return db.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended($1,0))`, lockKey)
+func LockSession(ctx context.Context, db *gorm.DB, lockKey string) (int64, error) {
+	result := db.WithContext(ctx).Exec(`SELECT pg_advisory_lock(hashtextextended(?,0))`, lockKey)
+	return result.RowsAffected, result.Error
 }
 
-func TrySessionLock(ctx context.Context, db RowReader, lockKey string) pgx.Row {
-	return db.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1,0))`, lockKey)
+func TrySessionLock(ctx context.Context, db *gorm.DB, lockKey string) *sql.Row {
+	return db.WithContext(ctx).Raw(`SELECT pg_try_advisory_lock(hashtextextended(?,0))`, lockKey).Row()
 }

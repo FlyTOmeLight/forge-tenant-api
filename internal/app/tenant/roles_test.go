@@ -8,10 +8,9 @@ import (
 
 func TestTeamGrantSourcesAndRevocation(t *testing.T) {
 	f := setupProject(t)
-	if _, e := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO teams(id,tenant_id,name) VALUES('dev','t','Development'),('qa','t','Quality')`,
-	); e != nil {
+	if e := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO teams(id,tenant_id,name) VALUES('dev','t','Development'),('qa','t','Quality')`).
+		Error; e != nil {
 		t.Fatal(e)
 	}
 	version := int64(1)
@@ -28,7 +27,9 @@ func TestTeamGrantSourcesAndRevocation(t *testing.T) {
 	check := func(desired, effective int, sources int) {
 		t.Helper()
 		var d, e int
-		if err := f.a.DB.QueryRow(f.ctx, `SELECT desired_level,effective_level FROM grants WHERE project_id='p' AND membership_id='mm'`).
+		if err := f.a.DB.WithContext(f.ctx).
+			Raw(`SELECT desired_level,effective_level FROM grants WHERE project_id='p' AND membership_id='mm'`).
+			Row().
 			Scan(&d, &e); err != nil {
 			t.Fatal(err)
 		}
@@ -64,10 +65,9 @@ func TestTeamGrantSourcesAndRevocation(t *testing.T) {
 	mutate(f.operator, "DELETE", "/teams/dev/members/mm", nil, 202)
 	mutate(f.operator, "DELETE", "/projects/p/team-grants/qa", nil, 202)
 	check(0, 0, 0)
-	if _, e := f.a.DB.Exec(
-		f.ctx,
-		`INSERT INTO tenants(id,name,slug) VALUES('foreign','Foreign','foreign');INSERT INTO teams VALUES('foreign-team','foreign','Foreign')`,
-	); e != nil {
+	if e := f.a.DB.WithContext(f.ctx).
+		Exec(`INSERT INTO tenants(id,name,slug) VALUES('foreign','Foreign','foreign');INSERT INTO teams VALUES('foreign-team','foreign','Foreign')`).
+		Error; e != nil {
 		t.Fatal(e)
 	}
 	mutate(f.operator, "PUT", "/teams/foreign-team/members/mm", nil, 404)
@@ -82,13 +82,15 @@ func TestTeamGrantSourcesAndRevocation(t *testing.T) {
 	mutate(f.operator, "PUT", "/teams/dev/members/mm", nil, 202)
 	mutate(f.operator, "DELETE", "/members/mm", nil, 202)
 	var n int
-	if e := f.a.DB.QueryRow(f.ctx, `SELECT count(*) FROM team_memberships WHERE membership_id='mm'`).
+	if e := f.a.DB.WithContext(f.ctx).Raw(`SELECT count(*) FROM team_memberships WHERE membership_id='mm'`).Row().
 		Scan(&n); e != nil ||
 		n != 0 {
 		t.Fatal(n, e)
 	}
 	var effective int
-	if e := f.a.DB.QueryRow(f.ctx, `SELECT effective_level FROM grants WHERE membership_id='mm' AND project_id='p'`).
+	if e := f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT effective_level FROM grants WHERE membership_id='mm' AND project_id='p'`).
+		Row().
 		Scan(&effective); e != nil ||
 		effective != 0 {
 		t.Fatal(effective, e)
@@ -98,10 +100,9 @@ func TestTeamGrantSourcesAndRevocation(t *testing.T) {
 func TestRoleMigrationPreservesAssignments(t *testing.T) {
 	f := setupProject(t)
 	// Reconstruct the actual pre-team schema, then run the production migrator twice.
-	_, err := f.a.DB.Exec(
-		f.ctx,
-		`DROP TABLE team_grants,team_memberships,direct_grants; DELETE FROM schema_versions WHERE version=5; ALTER TABLE memberships ADD COLUMN team_id text; INSERT INTO teams VALUES('old','t','Old team');UPDATE memberships SET team_id='old' WHERE id='mm'`,
-	)
+	err := f.a.DB.WithContext(f.ctx).
+		Exec(`DROP TABLE team_grants,team_memberships,direct_grants; DELETE FROM schema_versions WHERE version=5; ALTER TABLE memberships ADD COLUMN team_id text; INSERT INTO teams VALUES('old','t','Old team');UPDATE memberships SET team_id='old' WHERE id='mm'`).
+		Error
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,12 +112,14 @@ func TestRoleMigrationPreservesAssignments(t *testing.T) {
 		}
 	}
 	var n int
-	if err = f.a.DB.QueryRow(f.ctx, `SELECT count(*) FROM team_memberships WHERE team_id='old' AND membership_id='mm'`).
+	if err = f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT count(*) FROM team_memberships WHERE team_id='old' AND membership_id='mm'`).
+		Row().
 		Scan(&n); err != nil ||
 		n != 1 {
 		t.Fatal(n, err)
 	}
-	if err = f.a.DB.QueryRow(f.ctx, `SELECT count(*) FROM direct_grants WHERE level>0`).
+	if err = f.a.DB.WithContext(f.ctx).Raw(`SELECT count(*) FROM direct_grants WHERE level>0`).Row().
 		Scan(&n); err != nil ||
 		n != 2 {
 		t.Fatal(n, err)
@@ -125,13 +128,15 @@ func TestRoleMigrationPreservesAssignments(t *testing.T) {
 	if code != 200 || out["projects"].([]any)[0].(map[string]any)["effectiveRole"] != "developer" {
 		t.Fatal(code, out)
 	}
-	if _, err = f.a.DB.Exec(f.ctx, `DELETE FROM direct_grants WHERE membership_id='mm'`); err != nil {
+	if err = f.a.DB.WithContext(f.ctx).
+		Exec(`DELETE FROM direct_grants WHERE membership_id='mm'`).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	if err = table.Migrate(f.ctx, f.a.DB); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.a.DB.QueryRow(f.ctx, `SELECT count(*) FROM direct_grants WHERE membership_id='mm'`).
+	if err = f.a.DB.WithContext(f.ctx).Raw(`SELECT count(*) FROM direct_grants WHERE membership_id='mm'`).Row().
 		Scan(&n); err != nil ||
 		n != 0 {
 		t.Fatal("migration restored revoked source", n, err)

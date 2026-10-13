@@ -2,31 +2,51 @@ package table
 
 import (
 	"context"
+	"encoding/json"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"gorm.io/gorm"
 )
 
-type RowReader interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-type Writer interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}
-
-type Reader interface {
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-}
-
-func collect(ctx context.Context, db Reader, sql string, args ...any) ([]map[string]any, error) {
-	rows, err := db.Query(ctx, sql, args...)
+// collect preserves the API's column names, JSON values and empty array shape.
+func collect(ctx context.Context, db *gorm.DB, query string, args ...any) ([]map[string]any, error) {
+	rows, err := db.WithContext(ctx).Raw(query, args...).Rows()
 	if err != nil {
 		return nil, err
 	}
-	result, err := pgx.CollectRows(rows, pgx.RowToMap)
-	if result == nil {
-		result = []map[string]any{}
+	defer rows.Close()
+	columns, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, err
 	}
-	return result, err
+	result := []map[string]any{}
+	for rows.Next() {
+		values := make([]any, len(columns))
+		destinations := make([]any, len(columns))
+		for i := range values {
+			destinations[i] = &values[i]
+		}
+		if err := rows.Scan(destinations...); err != nil {
+			return nil, err
+		}
+		record := make(map[string]any, len(columns))
+		for i, column := range columns {
+			value := values[i]
+			if value != nil &&
+				(column.DatabaseTypeName() == "JSONB" || column.DatabaseTypeName() == "JSON") {
+				var data []byte
+				switch v := value.(type) {
+				case []byte:
+					data = v
+				case string:
+					data = []byte(v)
+				}
+				if err := json.Unmarshal(data, &value); err != nil {
+					return nil, err
+				}
+			}
+			record[column.Name()] = value
+		}
+		result = append(result, record)
+	}
+	return result, rows.Err()
 }

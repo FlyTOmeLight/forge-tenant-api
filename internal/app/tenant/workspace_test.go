@@ -28,7 +28,9 @@ func TestWorkspaceMembershipDoesNotRequireRepositoryGrant(t *testing.T) {
 	if len(out["projects"].([]any)) != 1 {
 		t.Fatal(out)
 	}
-	if _, err := f.a.DB.Exec(f.ctx, "UPDATE grants SET effective_level=0 WHERE membership_id='mm'"); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Exec("UPDATE grants SET effective_level=0 WHERE membership_id='mm'").
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	out = call("member", "t", f.a.Config.ServiceToken, 200)
@@ -36,7 +38,9 @@ func TestWorkspaceMembershipDoesNotRequireRepositoryGrant(t *testing.T) {
 		t.Fatal(out)
 	}
 	call("member", "foreign", f.a.Config.ServiceToken, 403)
-	if _, err := f.a.DB.Exec(f.ctx, "UPDATE memberships SET status='removed' WHERE id='mm'"); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Exec("UPDATE memberships SET status='removed' WHERE id='mm'").
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	call("member", "t", f.a.Config.ServiceToken, 403)
