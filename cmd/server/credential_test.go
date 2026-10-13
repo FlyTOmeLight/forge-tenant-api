@@ -26,7 +26,7 @@ func TestCredentialStatusUsesTOML(t *testing.T) {
 		path,
 		[]byte(
 			fmt.Sprintf(
-				"AppName = 'forge-test'\nAppCode = 101\nRunMode = 'release'\n[Gitlab]\nURL = %q\nToken = 'toml-token'\n",
+				"AppName = 'forge-test'\nAppCode = 101\nRunMode = 'release'\n[Forge]\nCAFile = ''\n[Gitlab]\nURL = %q\nToken = 'toml-token'\n",
 				server.URL,
 			),
 		),
