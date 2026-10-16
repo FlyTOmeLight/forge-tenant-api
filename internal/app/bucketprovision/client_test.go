@@ -17,12 +17,12 @@ func TestStorageManagementWire(t *testing.T) {
 		status     int
 		bad        bool
 	}{
-		{"created", `{"tenantID":"t_test","backendID":"jfs","bucket":"t-test"}`, 201, false},
-		{"replay", `{"tenantID":"t_test","backendID":"jfs","bucket":"t-test"}`, 200, false},
-		{"wrong tenant", `{"tenantID":"t_other","backendID":"jfs","bucket":"t-test"}`, 200, true},
-		{"empty bucket", `{"tenantID":"t_test","backendID":"jfs","bucket":""}`, 200, true},
-		{"trailing json", `{"tenantID":"t_test","backendID":"jfs","bucket":"x"}{}`, 200, true},
-		{"server failure", `secret response`, 503, true},
+		{name: "created", body: `{"tenantID":"t_test","backendID":"jfs","bucket":"t-test"}`, status: 201, bad: false},
+		{name: "replay", body: `{"tenantID":"t_test","backendID":"jfs","bucket":"t-test"}`, status: 200, bad: false},
+		{name: "wrong tenant", body: `{"tenantID":"t_other","backendID":"jfs","bucket":"t-test"}`, status: 200, bad: true},
+		{name: "empty bucket", body: `{"tenantID":"t_test","backendID":"jfs","bucket":""}`, status: 200, bad: true},
+		{name: "trailing json", body: `{"tenantID":"t_test","backendID":"jfs","bucket":"x"}{}`, status: 200, bad: true},
+		{name: "server failure", body: `secret response`, status: 503, bad: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

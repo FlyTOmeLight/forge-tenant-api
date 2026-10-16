@@ -30,17 +30,17 @@ func TestStorageProvisionConfiguration(t *testing.T) {
 		storage StorageConfig
 		invalid bool
 	}{
-		{"disabled", StorageConfig{}, false},
-		{"enabled", StorageConfig{URL: "https://storage.test/", ManagementToken: strings.Repeat("m", 32)}, false},
-		{"loopback test", StorageConfig{URL: "http://127.0.0.1:1234", ManagementToken: strings.Repeat("m", 32), Timeout: time.Second}, false},
-		{"missing credential", StorageConfig{URL: "https://storage.test"}, true},
-		{"short credential", StorageConfig{URL: "https://storage.test", ManagementToken: "short"}, true},
-		{"shared credential", StorageConfig{URL: "https://storage.test", ManagementToken: strings.Repeat("s", 32)}, true},
-		{"credential header injection", StorageConfig{URL: "https://storage.test", ManagementToken: strings.Repeat("m", 32) + "\n"}, true},
-		{"plaintext remote", StorageConfig{URL: "http://storage.test", ManagementToken: strings.Repeat("m", 32)}, true},
-		{"url credentials", StorageConfig{URL: "https://user:secret@storage.test", ManagementToken: strings.Repeat("m", 32)}, true},
-		{"url path", StorageConfig{URL: "https://storage.test/path", ManagementToken: strings.Repeat("m", 32)}, true},
-		{"unbounded timeout", StorageConfig{URL: "https://storage.test", ManagementToken: strings.Repeat("m", 32), Timeout: time.Hour}, true},
+		{name: "disabled", storage: StorageConfig{}, invalid: false},
+		{name: "enabled", storage: StorageConfig{URL: "https://storage.test/", ManagementToken: strings.Repeat("m", 32)}, invalid: false},
+		{name: "loopback test", storage: StorageConfig{URL: "http://127.0.0.1:1234", ManagementToken: strings.Repeat("m", 32), Timeout: time.Second}, invalid: false},
+		{name: "missing credential", storage: StorageConfig{URL: "https://storage.test"}, invalid: true},
+		{name: "short credential", storage: StorageConfig{URL: "https://storage.test", ManagementToken: "short"}, invalid: true},
+		{name: "shared credential", storage: StorageConfig{URL: "https://storage.test", ManagementToken: strings.Repeat("s", 32)}, invalid: true},
+		{name: "credential header injection", storage: StorageConfig{URL: "https://storage.test", ManagementToken: strings.Repeat("m", 32) + "\n"}, invalid: true},
+		{name: "plaintext remote", storage: StorageConfig{URL: "http://storage.test", ManagementToken: strings.Repeat("m", 32)}, invalid: true},
+		{name: "url credentials", storage: StorageConfig{URL: "https://user:secret@storage.test", ManagementToken: strings.Repeat("m", 32)}, invalid: true},
+		{name: "url path", storage: StorageConfig{URL: "https://storage.test/path", ManagementToken: strings.Repeat("m", 32)}, invalid: true},
+		{name: "unbounded timeout", storage: StorageConfig{URL: "https://storage.test", ManagementToken: strings.Repeat("m", 32), Timeout: time.Hour}, invalid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := base

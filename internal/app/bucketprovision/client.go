@@ -30,7 +30,7 @@ func (c *Client) Ensure(ctx context.Context, tenantID string) (Bucket, error) {
 	defer cancel()
 	body, _ := json.Marshal(struct {
 		TenantID string `json:"tenantID"`
-	}{tenantID})
+	}{TenantID: tenantID})
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,

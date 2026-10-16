@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -32,7 +33,7 @@ func run() error {
 	}
 	if mode == "bucket-retry" {
 		if len(os.Args) != 3 {
-			return fmt.Errorf("usage: server bucket-retry TENANT_ID")
+			return errors.New("usage: server bucket-retry TENANT_ID")
 		}
 		return service.RunBucketMaintenance(ctx, mode, os.Args[2])
 	}
