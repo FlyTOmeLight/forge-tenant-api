@@ -136,3 +136,17 @@ func (h *Controller) checkSession(c *core.Context) {
 	}
 	server.OK(c, result)
 }
+
+func (h *Controller) resolveScope(c *core.Context) {
+	var req tenantv1.ResolveScopeRequest
+	if err := httpapi.Bind(c, &req); err != nil {
+		httpapi.Fail(c, err)
+		return
+	}
+	result, err := h.service.ResolveScope(c.Request.Context(), req)
+	if err != nil {
+		httpapi.Fail(c, err)
+		return
+	}
+	server.OK(c, result)
+}

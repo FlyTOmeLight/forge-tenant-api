@@ -130,3 +130,14 @@ Controller 使用原生 Gin，公开写操作绑定明确的请求结构；未�
 导入 `github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1`，使用 `tenantv1.New(Config{Endpoint, ServiceToken, Timeout})` 构造客户端。方法与接口逐一对应：`CheckSession`、`CheckWorkspace`、`ResolveProject`、`CheckAccess`、`ListAccessEvents`。请求、响应类型由 SDK 与服务端共用，现有字段名称和无授权时的响应保持不变。
 
 `*tenantv1.Error` 保留实际 HTTP 状态、业务代码、消息和 Request-ID；网络与 context 错误保留错误身份。默认超时 15 秒，无自动重试或重定向。调用示例、资源关闭和游标责任见 [SDK 接入说明](../sdk/go/tenantv1/README.md)。
+
+
+## 物料接入作用域解析
+
+`POST /internal/v1/scope/resolve` 使用既有服务 Bearer，校验原始 Forge session 和本次精确作用域。请求字段：`session`、原始 `method`、`origin`、`csrf`、`tenant_id`、可选 `project_id`。`project_id` 省略或 null 表示租户直属；空字符串拒绝。写请求不能改写为 GET 或代填 Origin。
+
+成功直接返回 `{"user_id":"u_example","tenant_id":"t_example","project_id":null,"ownership_state":"active"}`。必须为有效用户、active 租户及 active 租户成员，operator 不绕过成员资格。项目仅核对其属于本次租户，不查 read/write/manage 或 grants，也不要求已同步 GitLab。
+
+仅支持 active scope；suspended 为 `403 SCOPE_INACTIVE`，不存在或项目不匹配为 `404 SCOPE_NOT_FOUND`，成员资格不足为 `403 SCOPE_ACCESS_DENIED`，无效输入为 `422 INVALID_SCOPE`。会话与 CSRF 沿用 `401 AUTH_REQUIRED`、`403 CSRF_REJECTED`。数据库故障保留服务错误，不推定为 deleted。返回 UserID 只能来自已校验 session，不接受调用方自报 UserID、角色或归属状态。
+
+Go SDK：`tenantv1.Client.ResolveScope(ctx, *ResolveScopeRequest)`；请求会输出明确 `project_id:null`，响应不包含 session 或服务凭据。

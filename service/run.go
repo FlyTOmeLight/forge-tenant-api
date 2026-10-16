@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	server "github.com/FlyTOmeLight/server-go"
@@ -20,10 +21,24 @@ import (
 
 // Run preserves the deployed api/worker/migrate/bootstrap command contract.
 // Only api starts HTTP; maintenance commands and the worker own no listener.
-func Run(ctx context.Context, mode string) (result error) {
-	if mode != "api" && mode != "worker" && mode != "migrate" && mode != "bootstrap" {
+func Run(ctx context.Context, mode string) error { return run(ctx, mode, "") }
+
+// RunBucketMaintenance exposes explicit database maintenance without starting HTTP.
+func RunBucketMaintenance(ctx context.Context, mode, tenantID string) error {
+	if mode != "bucket-backfill" && mode != "bucket-retry" {
+		return errors.New("unknown bucket maintenance mode")
+	}
+	if mode == "bucket-retry" && strings.TrimSpace(tenantID) == "" {
+		return errors.New("bucket-retry requires a tenant ID")
+	}
+	return run(ctx, mode, tenantID)
+}
+
+func run(ctx context.Context, mode, tenantID string) (result error) {
+	if mode != "api" && mode != "worker" && mode != "migrate" && mode != "bootstrap" && mode != "bucket-backfill" &&
+		mode != "bucket-retry" {
 		return errors.New(
-			"mode must be api, worker, migrate, bootstrap or gitlab-credential-status",
+			"mode must be api, worker, migrate, bootstrap, bucket-backfill, bucket-retry or gitlab-credential-status",
 		)
 	}
 	snapshot, err := conf.Load("")
@@ -91,6 +106,20 @@ func Run(ctx context.Context, mode string) (result error) {
 	}
 	operation, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	if mode == "bucket-backfill" {
+		_, err := table.BackfillTenantBuckets(operation, database.DB)
+		return err
+	}
+	if mode == "bucket-retry" {
+		changed, err := table.RetryFailedTenantBucket(operation, database.DB, tenantID)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errors.New("tenant bucket provision is not failed or does not exist")
+		}
+		return nil
+	}
 	if mode == "migrate" {
 		return table.Migrate(operation, database.DB)
 	}

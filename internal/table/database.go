@@ -21,7 +21,7 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 			&SchemaVersion{}, &User{}, &Tenant{}, &Team{}, &Membership{}, &Project{},
 			&Grant{}, &Operation{}, &AuditEvent{}, &Invitation{}, &Session{},
 			&LoginFlow{}, &Idempotency{}, &AccessEvent{},
-			&TeamMembership{}, &DirectGrant{}, &TeamGrant{},
+			&TeamMembership{}, &DirectGrant{}, &TeamGrant{}, &TenantBucketProvision{},
 		); err != nil {
 			return err
 		}

@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
 
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/bucketprovision"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/synchronization"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 )
@@ -19,6 +21,7 @@ type Worker struct {
 	cancel       context.CancelFunc
 	done         chan struct{}
 	result       error
+	buckets      *bucketprovision.Service
 }
 
 func newWorker(synchronizer *synchronization.Service) *Worker {
@@ -33,7 +36,14 @@ func (w *Worker) Start(ctx context.Context) error {
 	w.cancel = cancel
 	w.done = make(chan struct{})
 	go func() {
-		w.result = w.synchronizer.Run(runtime)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() { defer wg.Done(); w.result = w.synchronizer.Run(runtime) }()
+		if w.buckets != nil {
+			wg.Add(1)
+			go func() { defer wg.Done(); _ = w.buckets.Run(runtime) }()
+		}
+		wg.Wait()
 		close(w.done)
 	}()
 	return nil
@@ -94,5 +104,20 @@ func NewWorker(database *gorm.DB, cfg Config) (*Worker, error) {
 	}
 	worker := newWorker(synchronization.New(database, gitlab))
 	worker.transport = transport
+	if c.Storage.URL != "" {
+		// Never follow management redirects or carry a cookie jar.
+		storageHTTP := *transport
+		storageHTTP.Jar = nil
+		storageHTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		worker.buckets = &bucketprovision.Service{
+			DB: database,
+			Client: &bucketprovision.Client{
+				URL:     c.Storage.URL,
+				Token:   c.Storage.ManagementToken,
+				HTTP:    &storageHTTP,
+				Timeout: c.Storage.Timeout,
+			},
+		}
+	}
 	return worker, nil
 }

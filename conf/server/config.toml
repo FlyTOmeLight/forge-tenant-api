@@ -38,3 +38,10 @@ Organization = "${env: CASDOOR_ORGANIZATION:}"
 Issuer = "${env: OIDC_ISSUER:}"
 OIDCClientID = "${env: OIDC_CLIENT_ID:}"
 OIDCClientSecret = "${env: OIDC_CLIENT_SECRET:}"
+
+# Optional. New tenants always record a durable obligation; the worker starts
+# storage preparation only when this endpoint and its independent credential are set.
+[Storage]
+URL = "${env: STORAGE_URL:}"
+ManagementToken = "${env: STORAGE_MANAGEMENT_TOKEN:}"
+ # Timeout defaults to 15s; an explicit duration must be between 1s and 1m.

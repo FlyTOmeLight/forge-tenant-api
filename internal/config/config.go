@@ -5,14 +5,21 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/FlyTOmeLight/server-go/conf"
 )
 
 type Config struct {
 	DatabaseURL, PublicURL, BootstrapUser, AppKey, ServiceToken, CAFile, ModelURL string
+	Storage                                                                       StorageConfig
 	Gitlab                                                                        GitlabConfig
 	Casdoor                                                                       CasdoorConfig
+}
+
+type StorageConfig struct {
+	URL, ManagementToken string
+	Timeout              time.Duration
 }
 
 type GitlabConfig struct {
@@ -29,6 +36,7 @@ type File struct {
 	Forge   Config
 	Gitlab  GitlabConfig
 	Casdoor CasdoorConfig
+	Storage StorageConfig
 }
 
 func Load(snapshot *conf.Config) (Config, error) {
@@ -44,6 +52,30 @@ func (file File) Normalize() (Config, error) {
 	c := file.Forge
 	c.Gitlab = file.Gitlab
 	c.Casdoor = file.Casdoor
+	c.Storage = file.Storage
+	c.Storage.URL = strings.TrimRight(c.Storage.URL, "/")
+	if c.Storage.URL != "" || c.Storage.ManagementToken != "" {
+		u, err := url.Parse(c.Storage.URL)
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+			u.Path != "" ||
+			(u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) {
+			return c, errors.New("Storage.URL must be HTTPS or loopback HTTP origin")
+		}
+		if len(c.Storage.ManagementToken) < 32 || strings.ContainsAny(c.Storage.ManagementToken, " \t\r\n") {
+			return c, errors.New(
+				"Storage.ManagementToken must contain at least 32 characters without whitespace",
+			)
+		}
+		if c.Storage.ManagementToken == c.ServiceToken {
+			return c, errors.New("storage management credential must differ from tenant service credential")
+		}
+		if c.Storage.Timeout == 0 {
+			c.Storage.Timeout = 15 * time.Second
+		}
+		if c.Storage.Timeout < time.Second || c.Storage.Timeout > time.Minute {
+			return c, errors.New("Storage.Timeout must be between 1s and 1m")
+		}
+	}
 	for _, value := range []*string{&c.PublicURL, &c.Casdoor.URL, &c.Gitlab.URL, &c.ModelURL, &c.Gitlab.PublicURL} {
 		*value = strings.TrimRight(*value, "/")
 	}

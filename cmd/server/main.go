@@ -27,5 +27,14 @@ func run() error {
 	if mode == "gitlab-credential-status" {
 		return service.CredentialStatus(ctx, os.Stdout)
 	}
+	if mode == "bucket-backfill" {
+		return service.RunBucketMaintenance(ctx, mode, "")
+	}
+	if mode == "bucket-retry" {
+		if len(os.Args) != 3 {
+			return fmt.Errorf("usage: server bucket-retry TENANT_ID")
+		}
+		return service.RunBucketMaintenance(ctx, mode, os.Args[2])
+	}
 	return service.Run(ctx, mode)
 }

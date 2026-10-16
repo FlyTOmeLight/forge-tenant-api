@@ -64,6 +64,9 @@ func (a *Service) CreateTenant(
 			return nil, e
 		}
 		_, e := table.InsertTenantAdmin(ctx, tx, identity.ID("m"), tid, admin)
+		if e == nil {
+			e = table.EnqueueTenantBucket(ctx, tx, tid)
+		}
 		return map[string]any{"tenant_id": tid, "name": name, "slug": slug, "admin_user_id": admin}, e
 	}, r)
 }

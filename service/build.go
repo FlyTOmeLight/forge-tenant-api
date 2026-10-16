@@ -22,6 +22,8 @@ type GitlabConfig = config.GitlabConfig
 
 type CasdoorConfig = config.CasdoorConfig
 
+type StorageConfig = config.StorageConfig
+
 // Build owns the standalone database and transfers the HTTP module to Run.
 // Combined applications call NewAPI with their shared database instead.
 func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
