@@ -3,59 +3,27 @@ package table
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"gorm.io/gorm"
 )
 
-func FindIdempotency(ctx context.Context, db *gorm.DB, userID string, key string) (Idempotency, error) {
-	var record Idempotency
-	err := db.WithContext(ctx).
-		Raw(`SELECT route,body_hash,status_code,response FROM idempotency WHERE actor_id=? AND request_key=?`, userID, key).
-		Row().
-		Scan(&record.Route, &record.Digest, &record.Status, &record.Response)
-	return record, err
+type Operation struct {
+	ID            string     `gorm:"type:text;primaryKey"`
+	TenantID      string     `gorm:"type:text;not null;uniqueIndex:operations_tenant_id_version_key,priority:1"`
+	Version       int64      `gorm:"type:bigint;not null;uniqueIndex:operations_tenant_id_version_key,priority:2"`
+	Status        string     `gorm:"type:text;not null;check:operations_status_check,status IN ('pending','running','retrying','failed','conflict','succeeded','superseded')"`
+	Attempts      int        `gorm:"type:integer;not null;default:0"`
+	NextAttemptAt time.Time  `gorm:"type:timestamptz;not null;default:now();autoCreateTime:false;autoUpdateTime:false;index:operations_ready,where:status = 'pending' OR status = 'retrying' OR status = 'running'"`
+	LeaseUntil    *time.Time `gorm:"type:timestamptz;autoCreateTime:false;autoUpdateTime:false"`
+	ErrorCode     string     `gorm:"type:text;not null;default:''"`
+	ErrorMessage  string     `gorm:"type:text;not null;default:''"`
+	CreatedAt     time.Time  `gorm:"type:timestamptz;not null;default:now();autoCreateTime:false;autoUpdateTime:false"`
+	UpdatedAt     time.Time  `gorm:"type:timestamptz;not null;default:now();autoCreateTime:false;autoUpdateTime:false"`
+	Tenant        Tenant     `gorm:"foreignKey:TenantID;references:ID;constraint:operations_tenant_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
 }
 
-func InsertChangeAudit(
-	ctx context.Context,
-	db *gorm.DB,
-	tenantID string,
-	userID string,
-	action string,
-	target string,
-	detail []byte,
-	operationID string,
-) (int64, error) {
-	result := db.WithContext(ctx).
-		Exec(`INSERT INTO audit_events(tenant_id,actor_id,action,target,detail,operation_id) VALUES(?,?,?,?,?,?)`, tenantID, userID, action, target, string(detail), operationID)
-	return result.RowsAffected, result.Error
-}
-
-func InsertAccessEvent(
-	ctx context.Context,
-	db *gorm.DB,
-	tenantID string,
-	version int64,
-	action string,
-) (int64, error) {
-	result := db.WithContext(ctx).
-		Exec(`INSERT INTO access_events(tenant_id,version,reason) VALUES(?,?,?)`, tenantID, version, action)
-	return result.RowsAffected, result.Error
-}
-
-func InsertIdempotency(
-	ctx context.Context,
-	db *gorm.DB,
-	userID string,
-	key string,
-	route string,
-	digest string,
-	encryptedResult []byte,
-) (int64, error) {
-	result := db.WithContext(ctx).
-		Exec(`INSERT INTO idempotency(actor_id,request_key,route,body_hash,status_code,response) VALUES(?,?,?,?,202,?)`, userID, key, route, digest, encryptedResult)
-	return result.RowsAffected, result.Error
-}
+func (Operation) TableName() string { return "operations" }
 
 func SupersedeOperations(ctx context.Context, db *gorm.DB, tenantID string) (int64, error) {
 	result := db.WithContext(ctx).
@@ -69,54 +37,15 @@ func InsertOperation(ctx context.Context, db *gorm.DB, id string, tenantID strin
 	return result.RowsAffected, result.Error
 }
 
-func ListAccessEvents(ctx context.Context, db *gorm.DB, after int64) ([]map[string]any, error) {
-	return collect(ctx, db, `SELECT * FROM access_events WHERE id>? ORDER BY id LIMIT 200`, after)
-}
-
-func InsertInvitationAudit(
-	ctx context.Context,
-	db *gorm.DB,
-	tenantID string,
-	userID string,
-	membershipID string,
-	operationID string,
-) (int64, error) {
-	result := db.WithContext(ctx).
-		Exec(`INSERT INTO audit_events(tenant_id,actor_id,action,target,operation_id) VALUES(?,?,'accept_invitation',?,?)`, tenantID, userID, membershipID, operationID)
-	return result.RowsAffected, result.Error
-}
-
 func RetryableOperationExists(ctx context.Context, db *gorm.DB, tenantID string, operationID string) *sql.Row {
 	return db.WithContext(ctx).
 		Raw(`SELECT EXISTS(SELECT 1 FROM operations o JOIN tenants t ON t.id=o.tenant_id WHERE o.tenant_id=? AND o.id=? AND o.version=t.version AND o.status IN ('failed','conflict'))`, tenantID, operationID).
 		Row()
 }
 
-func ListUserTenants(ctx context.Context, db *gorm.DB, userID string) ([]map[string]any, error) {
-	return collect(
-		ctx,
-		db,
-		`SELECT t.*, (SELECT count(*) FROM memberships m WHERE m.tenant_id=t.id AND m.status<>'removed') AS member_count,(SELECT count(*) FROM projects p WHERE p.tenant_id=t.id) AS project_count,coalesce((SELECT status FROM operations o WHERE o.tenant_id=t.id AND o.version=t.version),'pending') AS sync_status FROM tenants t WHERE EXISTS(SELECT 1 FROM memberships m WHERE m.tenant_id=t.id AND m.user_id=? AND m.status='active') ORDER BY t.created_at DESC LIMIT 200`,
-		userID,
-	)
-}
-
-func ListPlatformTenants(ctx context.Context, db *gorm.DB) ([]map[string]any, error) {
-	return collect(
-		ctx,
-		db,
-		`SELECT t.*, (SELECT count(*) FROM memberships m WHERE m.tenant_id=t.id AND m.status<>'removed') AS member_count,(SELECT count(*) FROM projects p WHERE p.tenant_id=t.id) AS project_count,coalesce((SELECT status FROM operations o WHERE o.tenant_id=t.id AND o.version=t.version),'pending') AS sync_status FROM tenants t ORDER BY created_at DESC LIMIT 200`,
-	)
-}
-
 func RescheduleReconciliation(ctx context.Context, db *gorm.DB) (int64, error) {
 	result := db.WithContext(ctx).
 		Exec(`UPDATE operations o SET status='pending',attempts=0,next_attempt_at=now(),updated_at=now() FROM tenants t WHERE o.tenant_id=t.id AND o.version=t.version AND o.status='succeeded' AND o.updated_at<now()-interval '5 minutes'`)
-	return result.RowsAffected, result.Error
-}
-
-func PruneIdempotency(ctx context.Context, db *gorm.DB) (int64, error) {
-	result := db.WithContext(ctx).Exec(`DELETE FROM idempotency WHERE created_at<now()-interval '24 hours'`)
 	return result.RowsAffected, result.Error
 }
 
@@ -149,15 +78,6 @@ func FinishOperation(
 	return result.RowsAffected, result.Error
 }
 
-func InsertSyncAudit(
-	ctx context.Context,
-	db *gorm.DB,
-	tenantID string,
-	tenantIDTarget string,
-	version int64,
-	operationID string,
-) (int64, error) {
-	result := db.WithContext(ctx).
-		Exec(`INSERT INTO audit_events(tenant_id,actor_id,action,target,detail,operation_id) VALUES(?,'worker','sync_succeeded',?,jsonb_build_object('version',?::bigint),?)`, tenantID, tenantIDTarget, version, operationID)
-	return result.RowsAffected, result.Error
+func ListSnapshotOperations(ctx context.Context, db *gorm.DB, tenantID string) ([]map[string]any, error) {
+	return collect(ctx, db, `SELECT * FROM operations WHERE tenant_id=? ORDER BY version DESC LIMIT 100`, tenantID)
 }

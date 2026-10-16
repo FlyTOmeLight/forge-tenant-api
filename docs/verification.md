@@ -1,3 +1,30 @@
+## 2026-10-14：GORM 模型与 Go 数据迁移
+
+删除 `internal/table/schema.sql`、`roles.sql` 及未使用的 `service/testdata/tasks-v3.sql`。每张表的完整 GORM 模型放在同名 Go 文件中，新增 `SchemaVersion`；`Migrate` 使用模型 `AutoMigrate`，历史单团队成员关系与直接授权由 Go 数据迁移保留。PostgreSQL 迁移锁及事务范围沿用，数据库版本记录 1 / 2 / 5 保留。
+
+- 临时隔离库用改前 SQL 建立，运行两次新迁移；迁移前后 `pg_catalog` 的字段类型、NULL / 默认值、约束和索引逐项完全一致。临时对照文件已清理。
+- 新增真实数据库测试覆盖 45 个约束拒绝案例、32 个关键列类型及 NULL 语义、默认值、序列、自有索引、重复迁移和数据保留；旧数据升级失败会回滚新建表、保留原字段和数据，不记录已完成版本。
+- 真实临时 PostgreSQL 下全仓库 `GOWORK=off go test -tags=nomsgpack -race -count=1 ./...` 通过，无数据库跳过；历史团队升级、撤权来源不会被重复迁移恢复，原有 HTTP / SDK 和业务回归通过。 Go vet、格式检查、CGO_ENABLED=0 入口构建和 Docker 镜像构建通过。
+
+## 2026-10-14：按业务职责与表名完成内部拆分
+
+- `app` 拆为 authentication、user、tenant、member、team、project、invitation、authorization、workspace、synchronization。删除旧 account 和 workspace 的混合写入实现；HTTP 适配与业务错误移至 `internal/httpapi`、`internal/apperror`。
+- `table` 的模型和查询按 16 张实际表归位，删除 `models.go`、`snapshot.go`、`members.go`；迁移 SQL 与全部查询语义不变。共享迁移、锁与 JSONB 转换继续保留，未新增通用仓库或接口。
+- 共用租户事务逻辑归 `internal/tenantwrite`，保留授权、幂等、版本、审计、授权事件和 outbox 的提交顺序。清理无用 DB 字段、重复 map 别名及快照的字符串查询分派。
+- 真实隔离 PostgreSQL 下，全仓库 `GOWORK=off go test -tags=nomsgpack -race -count=1 ./...` 通过，数据库用例未跳过。覆盖邀请、成员生命周期、个人及团队授权、权限回放、同步、SDK 和路由；SQL 迁移文件未变化。 Go vet、CGO_ENABLED=0 入口构建、Docker 镜像构建、gofmt / gorgeous 与 git diff --check 通过。
+
+## 2026-10-14：按 server-go v0.9.0 重构装配与目录
+
+采用远端 HEAD / v0.9.0（d623dc8）的 `docs/go-project-layout.md`。公开 `service/` 承担构造、独立装配和生命周期；`cmd/server` 只处理命令、信号和退出码。API 通过 `app.Run` / `Build` 管理资源；Worker、迁移和 bootstrap 按实际依赖装配。保留 `[Log]`、环境变量、HTTP / SDK 协议、SQL 迁移与 `/forge` 命令契约。
+
+- `GOWORK=off`、无本地 replace，真实临时 PostgreSQL 下全仓库 `go test -tags=nomsgpack -race -count=1 ./...` 通过，数据库用例未跳过；Go vet 通过。
+- 公开 API / Worker 构造测试覆盖 readiness、初始化失败清理、自有 HTTP 连接释放、借用数据库保持可用，以及 Worker 取消与等待。独立 migrate 测试验证无效 CA / 不可达 OIDC 不会触发无关客户端初始化。
+- 实际进程完成 migrate、bootstrap（无初始账号配置）、API readiness / health / 未认证及未知路由错误响应；API 和 Worker 收到 SIGTERM 后退出码均为 0，Worker 未建立 HTTP 监听。OIDC 初始化失败时 API 返回退出码 1。使用本机模拟 OIDC，未访问真实 Casdoor / GitLab。
+- 独立消费模块仅导入公开 `service` 包即可构造配置并调用 `NewAPI`，编译通过；CGO_ENABLED=0 构建、Docker scratch 镜像构建、Helm lint、gofmt / gorgeous 和 git diff --check 通过。
+- HTTP 类型统一使用框架 core 别名；原集成测试与 fixture 迁至 `service/`，Docker / CI / README 路径同步。worker 停止超时且未确认退出时保留数据库，避免仍在运行的同步任务失去依赖。
+
+本轮未发布或替换现有部署，未重复前端浏览器与真实身份服务联调。历史线上版本及验收结果见下文。
+
 ## v0.9.1 外部 SDK 与配置验收
 
 - GitLab 使用官方 `gitlab.com/gitlab-org/api/client-go/v3 v3.18.0` 的类型化 API，删除手写 GitLab 请求与响应结构。官方 AuthSource 在每个请求读取 projected Secret；关闭 SDK 自动重试，保留 Worker 的重试策略、Retry-After 和权限冲突判定。

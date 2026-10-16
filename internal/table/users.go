@@ -3,9 +3,39 @@ package table
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"gorm.io/gorm"
 )
+
+type User struct {
+	ID        string    `gorm:"column:id;type:text;primaryKey;autoIncrement:false"`
+	Issuer    string    `gorm:"column:issuer;type:text;not null;uniqueIndex:users_issuer_subject_key,priority:1"`
+	Subject   *string   `gorm:"column:subject;type:text;uniqueIndex:users_issuer_subject_key,priority:2"`
+	Username  string    `gorm:"column:username;type:text;not null;unique"`
+	Name      string    `gorm:"column:name;type:text;not null"`
+	Email     string    `gorm:"column:email;type:text;not null;unique"`
+	Status    string    `gorm:"column:status;type:text;not null;check:users_status_check,status IN ('invited','active','disabled')"`
+	Operator  bool      `gorm:"column:operator;type:boolean;not null;default:false"`
+	GitLabID  *int64    `gorm:"column:gitlab_id;type:bigint;unique"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;not null;default:now();autoCreateTime:false"`
+}
+
+func (User) TableName() string { return "users" }
+
+type SessionIdentity struct {
+	ID, Name, Email, Subject string
+	Operator                 bool
+}
+
+func ListSyncUsers(ctx context.Context, db *gorm.DB, tenantID string) ([]map[string]any, error) {
+	return collect(
+		ctx,
+		db,
+		`SELECT DISTINCT u.id,u.subject,u.username,u.name,u.email FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=? AND m.status='active' AND u.status='active'`,
+		tenantID,
+	)
+}
 
 func UpsertOperator(
 	ctx context.Context,
@@ -66,4 +96,23 @@ func SetUserGitLabID(ctx context.Context, db *gorm.DB, userID string, gitlabID i
 
 func ActiveUserExists(ctx context.Context, db *gorm.DB, admin string) *sql.Row {
 	return db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM users WHERE id=? AND status='active')`, admin).Row()
+}
+
+func SessionUser(ctx context.Context, db *gorm.DB, sessionHash string) (SessionIdentity, error) {
+	var record SessionIdentity
+	err := db.WithContext(ctx).
+		Raw(`SELECT u.id,u.name,u.email,u.operator,coalesce(u.subject,'') FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>now() AND u.status='active'`, sessionHash).
+		Row().
+		Scan(&record.ID, &record.Name, &record.Email, &record.Operator, &record.Subject)
+	return record, err
+}
+
+func ListProjectPeople(ctx context.Context, db *gorm.DB, tenantID string, projectID string) ([]map[string]any, error) {
+	return collect(
+		ctx,
+		db,
+		`SELECT u.id,u.name,(least(g.desired_level,g.observed_level,g.effective_level)>=20) AS "canReview",(least(g.desired_level,g.observed_level,g.effective_level)>=30) AS "canOwn" FROM grants g JOIN memberships m ON m.id=g.membership_id JOIN users u ON u.id=m.user_id JOIN tenants t ON t.id=m.tenant_id WHERE g.tenant_id=? AND g.project_id=? AND t.status='active' AND m.status='active' AND u.status='active' AND least(g.desired_level,g.observed_level,g.effective_level)>=20 ORDER BY u.name`,
+		tenantID,
+		projectID,
+	)
 }

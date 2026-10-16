@@ -23,7 +23,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: test -z "$(gofmt -l cmd internal sdk)"
+      - run: test -z "$(gofmt -l cmd service internal sdk)"
       - run: go test -tags=nomsgpack -race -count=1 ./...
       - run: go vet -tags=nomsgpack ./...
       - run: go build -tags=nomsgpack ./cmd/server

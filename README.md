@@ -1,35 +1,50 @@
 # Forge 租户 API
 
-基于 server-go v0.4.0 的独立 Go 后端，管理企业、统一账号、成员、项目授权和同步队列，并对接 Casdoor 与 GitLab CE。配套 Vue 控制台在 [forge-tenant-web](https://github.com/FlyTOmeLight/forge-tenant-web)。后端只提供 API 和认证回调，不编译或服务前端页面。
+基于 server-go v0.9.0 的独立 Go 后端，管理企业、统一账号、成员、项目授权和同步队列，并对接 Casdoor 与 GitLab CE。配套 Vue 控制台在 [forge-tenant-web](https://github.com/FlyTOmeLight/forge-tenant-web)。后端只提供 API 和认证回调，不编译或服务前端页面。
 
 ## 目录与 HTTP 层
 
-按 [Go 官方服务端模块布局](https://go.dev/doc/modules/layout#server-project) 与 server-go 的职责划分组织。依赖从入口显式构造，事务和权限判断由租户业务层负责。
+按 [Go 官方服务端模块布局](https://go.dev/doc/modules/layout#server-project) 与 [server-go v0.9.0 项目组织约定](https://github.com/FlyTOmeLight/server-go/blob/v0.9.0/docs/go-project-layout.md) 的职责划分组织。依赖从入口显式构造，事务和权限判断由租户业务层负责。
 
 ```text
 cmd/server/               进程入口与 api / worker / migrate / bootstrap 命令
-internal/service/         HTTPHost 服务、路由装配、资源与 Worker 生命周期
-internal/app/account/     账号、登录、会话；Controller / Service / router
-internal/app/workspace/   租户工作区、成员、团队和项目写入；Controller / Service / router
-internal/app/authorization/ 项目权限、角色、权限说明和内部接口；Controller / Service / router
-internal/app/synchronization/ 持久化 GitLab 同步与核验
-internal/app/httpapi/     Cookie 会话中间件、绑定和既有错误协议映射
-internal/app/apperror/    领域错误
+service/                  公开构造、独立应用装配、HTTP 与 Worker 生命周期
+internal/app/authentication/ 登录、OIDC、会话与当前登录主体
+internal/app/user/           平台账号列表与初始运营账号
+internal/app/tenant/         租户创建、列表、启停
+internal/app/member/         成员邀请、角色调整、移除和重新邀请
+internal/app/team/           团队与团队成员
+internal/app/project/        项目接入、项目人员、直接及团队授权、项目解析
+internal/app/invitation/     邀请签发、查看、接受与身份激活
+internal/app/authorization/  角色、成员权限说明、有效权限判断与撤权事件
+internal/app/workspace/      工作区视图与工作区访问校验
+internal/app/synchronization/ GitLab 同步、核验与人工重试
+internal/tenantwrite/        租户写事务、幂等结果、审计和同步 outbox
+internal/httpapi/            Cookie 会话中间件、绑定和既有错误协议映射
+internal/apperror/           业务错误类型
 internal/identity/       统一账号身份和令牌
-internal/table/          GORM 持久化记录、查询与 SQL 迁移
+internal/table/          GORM 表模型、查询与 Go 数据迁移
 internal/client/         Casdoor、GitLab、OIDC 与 HTTP 连接
 internal/config/         业务配置
 sdk/go/tenantv1/         服务调用契约与客户端
 conf/server/            server-go 配置与环境变量占位符
 ```
 
-`internal/service.API` 实现 `host.Service`，统一安装会话与服务 Bearer 中间件并注册各领域 router。Controller 直接接收 Gin context、绑定类型化请求并调用业务 Service；移除 net/http handler 桥接，router 只注册 Controller 方法。账号、工作区、授权与同步各有独立 Service 和依赖；工作区的公开写方法负责授权、事务、持久化幂等与审计 / outbox，控制器不编排事务。授权 Service 复用 SDK 权限响应类型，工作区调用授权 Service 计算项目能力，同步模块通过版本核验更新已观测授权。`Resources` 负责资源构造、初始化失败清理和关闭，`Worker` 负责同步协程的取消与等待。
+`service.API` 实现 `host.Service`，统一安装会话与服务 Bearer 中间件并注册各业务 Controller。每个 app 包把自身的 Controller、请求类型和业务方法放在一起；Controller 使用框架 `core.Context` 绑定参数、输出响应，Service 负责业务校验和写入。`workspace` 只聚合工作区读取，不再持有成员、团队、项目和邀请写入。项目解析及授权列表归 `project`，工作区访问校验归 `workspace`，登录会话与平台账号管理分别归 `authentication` 和 `user`。
 
-数据库连接由 `server-go/db.Module` 管理，Table 使用 GORM 的 `WithContext`、`Raw` / `Exec` 执行查询与写入，业务层使用 GORM 事务。`DATABASE_URL` 原样传给框架 DSN，连接池上限为 12；同步 Worker 使用 GORM `Connection` 固定会话锁连接。表结构与版本化 SQL 迁移保留，不使用 AutoMigrate。
+各写入业务共用 `tenantwrite.Writer`，在同一租户锁与数据库事务中完成当前授权、幂等回放、版本校验、业务写入、审计、撤权事件和同步 outbox。各业务只定义自己的变更；邀请接受保留自身的身份创建事务。`service.Build` 通过 `app.Runtime` 初始化独立数据库并交付 API，由 `app.Run` 清理；公开 `NewAPI` / `NewWorker` 借用调用方数据库并拥有各自的 HTTP 连接。`Worker` 负责同步协程的取消与等待。
+
+`internal/table` 按实际表名拆文件：`users`、`tenants`、`memberships`、`teams`、`team_memberships`、`projects`、`grants`、`direct_grants`、`team_grants`、`operations`、`audit_events`、`access_events`、`invitations`、`sessions`、`login_flows`、`idempotency`、`schema_versions`。模型与查询放在所属表文件中，联表查询按返回主体归属。全库迁移、PostgreSQL 锁、JSONB 查询结果转换分别由 `database.go`、`locks.go`、`query.go` 负责。
+
+数据库连接由 `server-go/db.Module` 管理，Table 使用 GORM 的 `WithContext`、`Raw` / `Exec` 执行查询与写入，业务层使用 GORM 事务。`DATABASE_URL` 原样传给框架 DSN，连接池上限为 12；同步 Worker 使用 GORM `Connection` 固定会话锁连接。表结构由各表完整 GORM 模型定义，`Migrate` 在事务锁内执行 `AutoMigrate`，字段类型、NULL、默认值、唯一约束、复合外键及检查约束均由模型标签声明。历史团队和直接授权数据用 Go 迁移一次，`schema_versions` 记录完成状态；重复迁移不会恢复已撤销的授权。
 
 server-go 管理配置快照、HTTPHost 启动与排空、请求 ID、日志、Recovery、严格 JSON 绑定和服务 Bearer 鉴权。Controller 在 HTTP 边界将领域及框架错误映射为既有 `{error:{code,message}}` 格式。租户幂等结果仍与业务、审计和 outbox 一起写入 PostgreSQL。
 
-默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[Forge]` 配置本服务；顶层 `[Gitlab]` 集中配置 GitLab API / 浏览器地址、OIDC 客户端和管理凭据，`[Casdoor]` 集中配置身份服务、管理客户端、组织和 Forge OIDC 客户端。各配置保留既有环境变量名称；`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。GitLab API 调用使用官方 `client-go/v3`；Casdoor 管理调用复用官方 `casdoor-go-sdk` 的客户端 URL、用户和响应类型。Casdoor SDK v1.56.0 的用户方法不接收 context，HTTP 客户端为包级全局，因此传输保留实例适配，以支持请求取消及私有 CA。配置在启动时读取；调整后重启对应进程。API 收到退出信号后由 HTTPHost 排空请求，再由 Bootstrap 关闭数据库和外部 HTTP 空闲连接；Worker 取消并完成当前操作的结果持久化后释放资源。
+默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[Forge]` 配置本服务；顶层 `[Gitlab]` 集中配置 GitLab API / 浏览器地址、OIDC 客户端和管理凭据，`[Casdoor]` 集中配置身份服务、管理客户端、组织和 Forge OIDC 客户端。各配置保留既有环境变量名称；`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。GitLab API 调用使用官方 `client-go/v3`；Casdoor 管理调用复用官方 `casdoor-go-sdk` 的客户端 URL、用户和响应类型。Casdoor SDK v1.56.0 的用户方法不接收 context，HTTP 客户端为包级全局，因此传输保留实例适配，以支持请求取消及私有 CA。业务配置和日志在启动时读取，调整后重启对应进程；API 的框架配置由 `app.Run` 监听，HTTPHost 支持动态更新的项目按框架规则生效。API 收到退出信号后由 `app.Run` 协调 HTTPHost 排空请求，再停止服务、关闭外部 HTTP 空闲连接和数据库；Worker 取消并完成当前操作的结果持久化后释放资源。
+
+独立入口使用 `service.Run(ctx, mode)`，API 通过 `app.Run` 统一装配。框架 v0.9.0 不自动读取 `[Log]`，入口装配显式读取并传入 `Options.LogConfig`。Worker 只创建数据库和 GitLab 客户端；migrate 只连接数据库；bootstrap 只创建数据库和 Casdoor 客户端。现有 `/forge api|worker|migrate|bootstrap|gitlab-credential-status` 部署命令保持不变。
+
+组合应用导入公开 `service` 包，用 `service.Config{Forge: service.ForgeConfig{...}, Gitlab: service.GitlabConfig{...}, Casdoor: service.CasdoorConfig{...}}` 构造配置，调用 `service.NewAPI(ctx, sharedDB, cfg)` 并交给宿主生命周期。配置沿用各 TOML 节的校验规则；`NewAPI` 初始化 OIDC，不执行数据库迁移或平台账号 bootstrap。宿主通过 `service.SetupHTTP` 安装 Forge 响应协议，并负责迁移及共享数据库关闭；不要调用独立 `Build` 重复创建数据库。`NewWorker` 的运行 context 由 `Start` 传入，`Stop` 完成后再关闭借用的数据库。
 
 `/healthz` 返回 HTTPHost 的进程就绪状态；`/readyz` 额外检查 PostgreSQL，Helm readinessProbe 使用后者。`/ping` 和 `/version` 由框架提供。
 

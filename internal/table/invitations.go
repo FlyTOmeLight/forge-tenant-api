@@ -3,9 +3,24 @@ package table
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"gorm.io/gorm"
 )
+
+type Invitation struct {
+	ID           string     `gorm:"type:text;primaryKey"`
+	TokenHash    string     `gorm:"type:text;not null;unique"`
+	MembershipID string     `gorm:"type:text;not null"`
+	ExpiresAt    time.Time  `gorm:"type:timestamptz;not null;autoCreateTime:false;autoUpdateTime:false"`
+	ConsumedAt   *time.Time `gorm:"type:timestamptz;autoCreateTime:false;autoUpdateTime:false"`
+	CreatedAt    time.Time  `gorm:"type:timestamptz;not null;default:now();autoCreateTime:false;autoUpdateTime:false"`
+	Membership   Membership `gorm:"foreignKey:MembershipID;references:ID;constraint:invitations_membership_id_fkey,OnUpdate:NO ACTION,OnDelete:NO ACTION"`
+}
+
+func (Invitation) TableName() string { return "invitations" }
+
+type InvitationIdentity struct{ ID, MembershipID, UserID, Name, Email, Username, UserStatus string }
 
 func InspectInvitation(ctx context.Context, db *gorm.DB, tokenHash string) *sql.Row {
 	return db.WithContext(ctx).
@@ -19,8 +34,8 @@ func InvitationTenant(ctx context.Context, db *gorm.DB, tokenHash string) *sql.R
 		Row()
 }
 
-func LockInvitation(ctx context.Context, db *gorm.DB, tokenHash string) (Invitation, error) {
-	var record Invitation
+func LockInvitation(ctx context.Context, db *gorm.DB, tokenHash string) (InvitationIdentity, error) {
+	var record InvitationIdentity
 	err := db.WithContext(ctx).
 		Raw(`SELECT i.id,m.id,u.id,u.name,u.email,u.username,u.status FROM invitations i JOIN memberships m ON m.id=i.membership_id JOIN users u ON u.id=m.user_id JOIN tenants t ON t.id=m.tenant_id WHERE i.token_hash=? AND i.consumed_at IS NULL AND i.expires_at>now() AND m.status='invited' AND t.status='active' FOR UPDATE OF i,u`, tokenHash).
 		Row().

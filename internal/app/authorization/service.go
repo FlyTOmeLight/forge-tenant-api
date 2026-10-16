@@ -7,5 +7,3 @@ import (
 type Service struct{ DB *gorm.DB }
 
 func New(db *gorm.DB) *Service { return &Service{DB: db} }
-
-type Object = map[string]any

@@ -3,56 +3,10 @@ package authorization
 import (
 	"context"
 
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/apperror"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/apperror"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/identity"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 )
-
-func (a *Service) GrantCandidates(ctx context.Context, u identity.User, tid, pid string) (Object, error) {
-	allowed, e := GrantManager(ctx, a.DB, u, tid, pid)
-	if e != nil {
-		return nil, e
-	}
-	if !allowed {
-		return nil, apperror.New(404, "NOT_FOUND", "项目不存在或无授权管理权限")
-	}
-	rows, e := table.ListGrantCandidates(ctx, a.DB, tid)
-	if e != nil {
-		return nil, e
-	}
-	return Object{"items": rows}, nil
-}
-
-func (a *Service) ProjectPeople(ctx context.Context, u identity.User, tid, pid string) (Object, error) {
-	level, e := a.ProjectRead(ctx, u, tid, pid)
-	if e != nil {
-		return nil, e
-	}
-	rows, e := table.ListProjectPeople(ctx, a.DB, tid, pid)
-	if e != nil {
-		return nil, e
-	}
-	return Object{"items": rows, "canAssign": level >= 30}, nil
-}
-
-func (a *Service) ProjectTeamGrants(ctx context.Context, u identity.User, tid, pid string) (Object, error) {
-	ok, err := GrantManager(ctx, a.DB, u, tid, pid)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, apperror.New(404, "NOT_FOUND", "没有项目授权管理权限")
-	}
-	rows, err := table.ListProjectTeamGrants(ctx, a.DB, tid, pid)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		row["role"] = GrantRole(GrantLevel(row["level"]))
-		delete(row, "level")
-	}
-	return Object{"items": rows}, nil
-}
 
 func (a *Service) MemberPermissions(
 	ctx context.Context,
@@ -110,7 +64,7 @@ func (a *Service) MemberPermissions(
 		p["effectiveRole"] = GrantRole(level)
 		p["permissions"] = ProjectCapabilities(level, tenantAdmin, active)
 		p["reason"] = reason
-		own := []Object{}
+		own := []map[string]any{}
 		for _, s := range sources {
 			if s["project_id"] == p["id"] {
 				own = append(own, s)

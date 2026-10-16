@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/apperror"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/apperror"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/identity"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 	"github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1"
@@ -86,8 +86,8 @@ func ProjectCapabilities(level int, tenantAdmin, active bool) ProjectPermissions
 	}
 }
 
-func TenantPermissions(admin, active bool) Object {
-	return Object{
+func TenantPermissions(admin, active bool) map[string]any {
+	return map[string]any{
 		"manageMembers":  admin && active,
 		"manageProjects": admin && active,
 		"viewSettings":   admin,

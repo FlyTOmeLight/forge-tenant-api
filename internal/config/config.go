@@ -24,17 +24,26 @@ type CasdoorConfig struct {
 	Issuer, OIDCClientID, OIDCClientSecret string
 }
 
+// File mirrors the existing top-level TOML sections.
+type File struct {
+	Forge   Config
+	Gitlab  GitlabConfig
+	Casdoor CasdoorConfig
+}
+
 func Load(snapshot *conf.Config) (Config, error) {
-	var c Config
-	if err := snapshot.UnmarshalKey("Forge", &c); err != nil {
-		return c, err
+	var file File
+	if err := snapshot.Unmarshal(&file); err != nil {
+		return Config{}, err
 	}
-	if err := snapshot.UnmarshalKey("Gitlab", &c.Gitlab); err != nil {
-		return c, err
-	}
-	if err := snapshot.UnmarshalKey("Casdoor", &c.Casdoor); err != nil {
-		return c, err
-	}
+	return file.Normalize()
+}
+
+// Normalize validates a copy, leaving caller-owned configuration unchanged.
+func (file File) Normalize() (Config, error) {
+	c := file.Forge
+	c.Gitlab = file.Gitlab
+	c.Casdoor = file.Casdoor
 	for _, value := range []*string{&c.PublicURL, &c.Casdoor.URL, &c.Gitlab.URL, &c.ModelURL, &c.Gitlab.PublicURL} {
 		*value = strings.TrimRight(*value, "/")
 	}
