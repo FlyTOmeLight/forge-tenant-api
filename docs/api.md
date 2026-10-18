@@ -26,7 +26,7 @@
 | `POST /api/v1/tenants/{tid}/operations/{oid}/retry` | 企业管理员对当前 failed / conflict 目标发起新版本重试 |
 | `POST /api/v1/invitations/inspect` | token 检查；只接受同源请求 |
 | `POST /api/v1/invitations/accept` | token, password（仅新账号）；已有账号必须登录匹配身份 |
-| `GET /api/v1/platform/connections` | 平台管理员检查 GitLab、模型和身份接入；不返回管理凭证 |
+| `GET /api/v1/platform/connections` | 由网关转发到 forge-coding-api；本服务不注册此接口 |
 | `POST /auth/logout` | 删除服务端会话并清除 Cookie；不撤销已签发的 API key |
 | `POST /api/v1/credentials` | 仅 Cookie 会话：创建自己的用户 API key，默认 90 天、最长 365 天；响应一次性返回 token |
 | `GET /api/v1/credentials` | 仅 Cookie 会话：列出自己的凭据元数据，永不返回 token 或摘要 |
@@ -141,10 +141,10 @@ SDK 还提供 `tenantv1.Identity(MiddlewareConfig{Client, SessionCookie})`：从
 
 ## 物料接入作用域解析
 
-`POST /internal/v1/scope/resolve` 使用服务 API key（`Authorization: Bearer`），校验原始 Forge session 和本次精确作用域。请求字段：`session`、原始 `method`、`origin`、`csrf`、`tenant_id`、可选 `project_id`。`project_id` 省略或 null 表示租户直属；空字符串拒绝。写请求不能改写为 GET 或代填 Origin。
+`POST /internal/v1/scope/resolve` 使用服务 API key（`Authorization: Bearer`），校验原始用户证明和本次精确作用域。`type=session` 提交 `session`、原始 `method`、`origin`、`csrf`；`type=api_key` 提交用户 `api_key` 和原始 `method`，不做浏览器 CSRF 检查。旧调用省略 `type` 时按 session 处理，同时提供两种凭据拒绝。两种证明均须提交 `tenant_id` 和可选 `project_id`。`project_id` 省略或 null 表示租户直属；空字符串拒绝。写请求不能改写为 GET 或代填 Origin。
 
-成功直接返回 `{"user_id":"u_example","tenant_id":"t_example","project_id":null,"ownership_state":"active"}`。必须为有效用户、active 租户及 active 租户成员，operator 不绕过成员资格。项目仅核对其属于本次租户，不查 read/write/manage 或 grants，也不要求已同步 GitLab。
+成功直接返回 `{"user_id":"u_example","principal":{"id":"u_example","name":"User","email":"user@example.test","operator":false},"tenant_id":"t_example","project_id":null,"ownership_state":"active"}`。必须为有效用户、active 租户及 active 租户成员，operator 不绕过成员资格。项目仅核对其属于本次租户，不查 read/write/manage 或 grants，也不要求已同步 GitLab。
 
-仅支持 active scope；suspended 为 `403 SCOPE_INACTIVE`，不存在或项目不匹配为 `404 SCOPE_NOT_FOUND`，成员资格不足为 `403 SCOPE_ACCESS_DENIED`，无效输入为 `422 INVALID_SCOPE`。会话与 CSRF 沿用 `401 AUTH_REQUIRED`、`403 CSRF_REJECTED`。数据库故障保留服务错误，不推定为 deleted。返回 UserID 只能来自已校验 session，不接受调用方自报 UserID、角色或归属状态。
+仅支持 active scope；suspended 为 `403 SCOPE_INACTIVE`，不存在或项目不匹配为 `404 SCOPE_NOT_FOUND`，成员资格不足为 `403 SCOPE_ACCESS_DENIED`，无效输入为 `422 INVALID_SCOPE`。会话与 CSRF 沿用 `401 AUTH_REQUIRED`、`403 CSRF_REJECTED`。数据库故障保留服务错误，不推定为 deleted。返回 UserID 和 principal 只能来自已校验的用户证明，不接受调用方自报 UserID、角色或归属状态。
 
 Go SDK：`tenantv1.Client.ResolveScope(ctx, *ResolveScopeRequest)`；请求会输出明确 `project_id:null`，响应不包含 session 或服务凭据。

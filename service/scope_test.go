@@ -16,18 +16,29 @@ import (
 
 func TestScopeResolve(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		session string
-		method  string
-		origin  string
-		csrf    string
-		tenant  string
-		project *string
-		mutate  string
-		status  int
-		code    string
+		name      string
+		session   string
+		proofType string
+		withKey   bool
+		method    string
+		origin    string
+		csrf      string
+		tenant    string
+		project   *string
+		mutate    string
+		status    int
+		code      string
 	}{
 		{name: "tenant", method: "GET", tenant: "t", status: 200},
+		{name: "explicit session", proofType: "session", method: "GET", tenant: "t", status: 200},
+		{name: "API key write without CSRF", proofType: "api_key", withKey: true, session: "missing", method: "POST", tenant: "t", status: 200},
+		{name: "API key project", proofType: "api_key", withKey: true, session: "missing", method: "GET", tenant: "t", project: scopeString("unsynced"), status: 200},
+		{name: "API key foreign project", proofType: "api_key", withKey: true, session: "missing", method: "GET", tenant: "t", project: scopeString("foreign"), status: 404, code: "SCOPE_NOT_FOUND"},
+		{name: "API key removed member", proofType: "api_key", withKey: true, session: "missing", method: "GET", tenant: "t", mutate: `UPDATE memberships SET status='removed' WHERE id='mm'`, status: 403, code: "SCOPE_ACCESS_DENIED"},
+		{name: "revoked API key", proofType: "api_key", withKey: true, session: "missing", method: "GET", tenant: "t", mutate: `UPDATE credentials SET revoked_at=now() WHERE owner_kind='user'`, status: 401, code: "AUTH_REQUIRED"},
+		{name: "API key with session", proofType: "api_key", withKey: true, method: "GET", tenant: "t", status: 400, code: "AMBIGUOUS_IDENTITY_PROOF"},
+		{name: "legacy session with API key", withKey: true, method: "GET", tenant: "t", status: 400, code: "AMBIGUOUS_IDENTITY_PROOF"},
+		{name: "unknown proof type", proofType: "unknown", method: "GET", tenant: "t", status: 400, code: "INVALID_IDENTITY_PROOF"},
 		{name: "project without grants or GitLab sync", method: "GET", tenant: "t", project: scopeString("unsynced"), status: 200},
 		{name: "write", method: "POST", origin: "valid", csrf: "valid", tenant: "t", status: 200},
 		{name: "wrong csrf", method: "POST", origin: "valid", csrf: "wrong", tenant: "t", status: 403, code: "CSRF_REJECTED"},
@@ -82,9 +93,15 @@ func TestScopeResolve(t *testing.T) {
 			if csrf == "valid" {
 				csrf = identity.Hash(token + ":csrf")
 			}
+			apiKey := ""
+			if tc.withKey {
+				apiKey = f.a.userKey
+			}
 			out, err := sdk.ResolveScope(
 				f.ctx,
 				&tenantv1.ResolveScopeRequest{
+					Type:      tc.proofType,
+					APIKey:    apiKey,
 					Session:   token,
 					Method:    tc.method,
 					Origin:    origin,
@@ -94,7 +111,9 @@ func TestScopeResolve(t *testing.T) {
 				},
 			)
 			if tc.status == 200 {
-				if err != nil || out.UserID != "member" || out.TenantID != tc.tenant ||
+				if err != nil || out.Principal == nil || out.Principal.ID != "member" ||
+					out.UserID != "member" ||
+					out.TenantID != tc.tenant ||
 					out.OwnershipState != "active" ||
 					(out.ProjectID == nil) != (tc.project == nil) {
 					t.Fatalf("scope: %+v %v", out, err)

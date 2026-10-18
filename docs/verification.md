@@ -1,3 +1,11 @@
+## 2026-10-18：可选范围鉴权中间件
+
+- SDK 增加标准 HTTP 与 server-go 的 `Authorization` 中间件。未提供 tenant/project 时保持 nil；提供范围必须校验有效成员和项目归属，项目路由显式配置 read/write/manage，缺少必要范围或权限时不执行 handler。用户身份只来自 Cookie/API key，忽略客户端自报用户头。
+- scope/resolve 支持用户 API key 与旧会话证明，返回已验证 principal；原有会话调用字段保持可用。项目 scope 成功只证明归属，不代替项目操作权限。
+- 使用现有本机 PostgreSQL 17.6 容器中的独立测试数据库运行 `GIN_MODE=release go test -tags=nomsgpack -race -count=1 ./...`，全仓通过；本轮 scope、凭据及授权数据库用例实际执行。需要 artifact-go 外部驱动的测试仍按其条件执行，不代表外部服务联调已完成。
+- 新增真实 HTTP + PostgreSQL 中间件回归：Cookie/API key、无范围、租户范围、项目写入、管理权限不足、同租户无授权项目、跨租户项目、成员移除、租户停用、用户禁用、key 撤销、项目撤权以及伪造 X-User-ID。
+- `go vet -tags=nomsgpack ./...`、`GOWORK=off go build -tags=nomsgpack` 和 `git diff --check` 通过。没有部署，未修改集群 Secret；真实 Casdoor/GitLab/其他微服务联调未执行。
+
 ## 2026-10-18：配置整理与 Bearer API key 统一身份
 
 配置按用途拆分：删除 `[Forge]` 整节、`ModelURL` 和全局 `ServiceToken`，数据库改由 `[DB]`（server-go `db.Config`，驱动、DSN、连接池可配）提供，应用自身设置归 `[Tenant]`（`PublicURL`、出站 `CAFile`、幂等响应加密密钥）。`AppKey` 改名为 `EncryptionKey`，环境变量由 `APP_KEY` 改为 `TENANT_ENCRYPTION_KEY`，算法与存储格式不变，部署时只改变量名、值须沿用原值。`BootstrapUser` 移出配置，只有 bootstrap 命令读 `BOOTSTRAP_USERNAME`。各命令按实际用途校验配置：api 要求 PublicURL / 加密密钥 / Casdoor / OIDC，worker 要求 GitLab，migrate 与 bucket 维护只要求数据库，bootstrap 额外要求 Casdoor 与 issuer。

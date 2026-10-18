@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// ResolveScope validates the original session and active tenant membership.
+// ResolveScope validates the original user proof and active tenant membership.
 // Project selection checks ownership only, without consulting project grants.
 func (c *Client) ResolveScope(ctx context.Context, request *ResolveScopeRequest) (*ResolveScopeResponse, error) {
 	if request == nil {
