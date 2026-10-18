@@ -19,15 +19,11 @@ func CredentialStatus(ctx context.Context, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var gitlab config.GitlabConfig
-	if err := snapshot.UnmarshalKey("Gitlab", &gitlab); err != nil {
+	c, err := config.Load(snapshot)
+	if err != nil {
 		return err
 	}
-	var forge struct{ CAFile string }
-	if err := snapshot.UnmarshalKey("Forge", &forge); err != nil {
-		return err
-	}
-	transport, err := client.NewHTTP(forge.CAFile)
+	transport, err := client.NewHTTP(c.CAFile)
 	if err != nil {
 		return err
 	}
@@ -35,9 +31,9 @@ func CredentialStatus(ctx context.Context, output io.Writer) error {
 	transport.Timeout = 15 * time.Second
 
 	g := client.GitLab{
-		URL:       gitlab.URL,
-		Token:     gitlab.Token,
-		TokenFile: gitlab.TokenFile,
+		URL:       c.Gitlab.URL,
+		Token:     c.Gitlab.Token,
+		TokenFile: c.Gitlab.TokenFile,
 		HTTP:      transport,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)

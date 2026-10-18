@@ -4,11 +4,11 @@
 
 ## 操作前鉴权
 
-服务调用携带 `Authorization: Bearer <SERVICE_TOKEN>`，令牌只保存在可信服务的 Secret 中。
+服务调用携带 `Authorization: Bearer <服务 API key>`。每个调用服务使用自己的 key（由 forge-tenant 维护命令签发），只保存在该服务的 Secret 中，可单独轮换和撤销；用户凭据不能调用内部接口。
 
 ```http
 POST /internal/v1/access/check
-Authorization: Bearer <SERVICE_TOKEN>
+Authorization: Bearer <服务 API key>
 Content-Type: application/json
 
 {"user_id":"u_...","tenant_id":"t_...","project_id":"p_...","action":"write"}
@@ -24,7 +24,7 @@ Content-Type: application/json
 
 ```http
 GET /internal/v1/access/events?after=123
-Authorization: Bearer <SERVICE_TOKEN>
+Authorization: Bearer <服务 API key>
 ```
 
 返回按 ID 递增的 `items`，每页最多 200 条；每项包含 `id, tenant_id, version, reason, created_at`。消费方持久化最后成功处理的 ID，再读取下一页；处理必须可重放。事件包括所有企业授权目标变更，消费方应重新检查受影响资源，不仅根据 reason 猜测权限。

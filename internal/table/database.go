@@ -20,7 +20,7 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 		if err := tx.AutoMigrate(
 			&SchemaVersion{}, &User{}, &Tenant{}, &Team{}, &Membership{}, &Project{},
 			&Grant{}, &Operation{}, &AuditEvent{}, &Invitation{}, &Session{},
-			&LoginFlow{}, &Idempotency{}, &AccessEvent{},
+			&LoginFlow{}, &Idempotency{}, &AccessEvent{}, &Credential{},
 			&TeamMembership{}, &DirectGrant{}, &TeamGrant{}, &TenantBucketProvision{},
 		); err != nil {
 			return err

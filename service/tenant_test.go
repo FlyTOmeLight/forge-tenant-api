@@ -20,6 +20,7 @@ import (
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/authentication"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/authorization"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/credential"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/synchronization"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/tenant"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
@@ -41,6 +42,11 @@ type testApplication struct {
 	Writes        *tenantwrite.Writer
 	Authorization *authorization.Service
 	Sync          *synchronization.Service
+
+	// ServiceKey authenticates internal calls; userKey belongs to the member.
+	ServiceKey string
+
+	userKey string
 }
 
 type fixture struct {
@@ -75,11 +81,13 @@ func setup(t *testing.T) *fixture {
 	a, e := newTestService(
 		ctx,
 		config.Config{
-			DatabaseURL:  parsed.String(),
-			AppKey:       strings.Repeat("ab", 32),
-			PublicURL:    "http://127.0.0.1:8383",
-			Casdoor:      config.CasdoorConfig{Issuer: "https://identity.test"},
-			ServiceToken: strings.Repeat("test", 16),
+			DB: frameworkdb.Config{
+				Driver: frameworkdb.DriverPostgreSQL, DSN: parsed.String(),
+				MaxOpenConns: 12, MaxIdleConns: 12,
+			},
+			EncryptionKey: strings.Repeat("ab", 32),
+			PublicURL:     "http://127.0.0.1:8383",
+			Casdoor:       config.CasdoorConfig{Issuer: "https://identity.test"},
 		},
 	)
 	if e != nil {
@@ -96,6 +104,12 @@ func setup(t *testing.T) *fixture {
 	if e = table.Migrate(ctx, a.DB); e != nil {
 		t.Fatal(e)
 	}
+	expires := time.Now().UTC().Add(time.Hour)
+	serviceKey, e := credential.New(a.DB).IssueService(ctx, "forge-test", "fixture", expires)
+	if e != nil {
+		t.Fatal(e)
+	}
+	a.ServiceKey = serviceKey.Token
 	f := &fixture{a: a, ctx: ctx, operator: identity.Token(), member: identity.Token(), other: identity.Token()}
 	for i, item := range []struct {
 		id, token string
@@ -114,6 +128,11 @@ func setup(t *testing.T) *fixture {
 			t.Fatal(e)
 		}
 	}
+	userKey, e := credential.New(a.DB).IssueUser(ctx, "member", "fixture", expires)
+	if e != nil {
+		t.Fatal(e)
+	}
+	a.userKey = userKey.Token
 	return f
 }
 
@@ -444,7 +463,7 @@ func TestProjectAdminCannotManageOtherProjectsOrEnterprise(t *testing.T) {
 }
 
 func newTestService(ctx context.Context, c config.Config) (*testApplication, error) {
-	db, err := openTestDB(ctx, c.DatabaseURL)
+	db, err := openTestDB(ctx, c.DB.DSN)
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +482,7 @@ func newTestService(ctx context.Context, c config.Config) (*testApplication, err
 	oidc := &client.OIDC{HTTP: transport}
 	accounts := authentication.New(db, c, casdoor, oidc)
 	permissions := authorization.New(db)
-	writes, err := tenantwrite.New(db, c.AppKey)
+	writes, err := tenantwrite.New(db, c.EncryptionKey)
 	service := &testApplication{
 		DB:            db,
 		Config:        c,

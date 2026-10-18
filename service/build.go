@@ -12,11 +12,12 @@ import (
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/config"
 )
 
-// Config mirrors the Forge, Gitlab and Casdoor TOML sections. The public aliases
-// let combined applications construct it without importing private packages.
+// Config mirrors the DB, Tenant, Gitlab, Casdoor and Storage TOML sections.
+// The public aliases let combined applications construct it without importing
+// private packages.
 type Config = config.File
 
-type ForgeConfig = config.Config
+type TenantConfig = config.TenantConfig
 
 type GitlabConfig = config.GitlabConfig
 
@@ -31,7 +32,10 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	database := newDatabase(c.DatabaseURL)
+	if err := c.RequireDatabase(); err != nil {
+		return err
+	}
+	database := &db.Module{Config: &c.DB}
 	if err := runtime.Initialize(ctx, database); err != nil {
 		return err
 	}
@@ -41,12 +45,6 @@ func Build(ctx context.Context, runtime *app.Runtime, cfg *Config) error {
 		return err
 	}
 	return runtime.AddService(api)
-}
-
-func newDatabase(dsn string) *db.Module {
-	return &db.Module{Config: &db.Config{
-		Driver: db.DriverPostgreSQL, DSN: dsn, MaxOpenConns: 12, MaxIdleConns: 12,
-	}}
 }
 
 func newCasdoor(c config.Config, transport *http.Client) *client.Casdoor {

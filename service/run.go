@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"time"
 
 	server "github.com/FlyTOmeLight/server-go"
 	"github.com/FlyTOmeLight/server-go/app"
 	"github.com/FlyTOmeLight/server-go/conf"
+	"github.com/FlyTOmeLight/server-go/db"
 	"github.com/FlyTOmeLight/server-go/logger"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	gormlogger "gorm.io/gorm/logger"
@@ -65,13 +67,36 @@ func run(ctx context.Context, mode, tenantID string) (result error) {
 	if err != nil {
 		return err
 	}
+	switch mode {
+	case "worker":
+		if err := c.RequireDatabase(); err != nil {
+			return err
+		}
+		if err := c.RequireWorker(); err != nil {
+			return err
+		}
+	case "bootstrap":
+		if err := c.RequireDatabase(); err != nil {
+			return err
+		}
+		if err := c.RequireBootstrap(); err != nil {
+			return err
+		}
+		if strings.TrimSpace(os.Getenv("BOOTSTRAP_USERNAME")) == "" {
+			return errors.New("bootstrap requires BOOTSTRAP_USERNAME")
+		}
+	default:
+		if err := c.RequireDatabase(); err != nil {
+			return err
+		}
+	}
 	log, err := logger.NewLogger(&logConfig)
 	if err != nil {
 		return err
 	}
 	defer log.Close()
 	ctx = logger.WithContext(ctx, log)
-	database := newDatabase(c.DatabaseURL)
+	database := &db.Module{Config: &c.DB}
 	resources := server.NewBootstrap(database)
 	releaseDatabase := true
 	defer func() {
@@ -128,7 +153,7 @@ func run(ctx context.Context, mode, tenantID string) (result error) {
 		return err
 	}
 	defer transport.CloseIdleConnections()
-	return user.New(database.DB, c, newCasdoor(c, transport)).Bootstrap(operation)
+	return user.New(database.DB, c, newCasdoor(c, transport)).Bootstrap(operation, os.Getenv("BOOTSTRAP_USERNAME"))
 }
 
 // SetupHTTP installs Forge's existing response contract before routes are built.

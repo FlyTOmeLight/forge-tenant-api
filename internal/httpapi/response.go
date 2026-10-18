@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/FlyTOmeLight/server-go/constants"
 	serrors "github.com/FlyTOmeLight/server-go/errors"
@@ -99,24 +100,106 @@ func MutationBody(c *core.Context, request any) ([]byte, error) {
 	return raw, nil
 }
 
+// authenticateSession validates the forge_session cookie and the browser CSRF
+// contract for writes. A failed check aborts the request.
+func authenticateSession(
+	c *core.Context,
+	authenticate func(context.Context, string) (identity.User, string, error),
+	publicURL string,
+) (identity.User, string, bool) {
+	session, _ := c.Cookie("forge_session")
+	u, csrf, err := authenticate(c.Request.Context(), session)
+	if err != nil {
+		Fail(c, err)
+		return identity.User{}, "", false
+	}
+	if c.Request.Method != "GET" && c.Request.Method != "HEAD" &&
+		(c.GetHeader("Origin") != publicURL || subtle.ConstantTimeCompare([]byte(c.GetHeader("X-CSRF-Token")), []byte(csrf)) != 1) {
+		Fail(c, apperror.New(403, "CSRF_REJECTED", "请求来源校验失败，请刷新页面"))
+		return identity.User{}, "", false
+	}
+	return u, csrf, true
+}
+
+// bearerToken returns the credential carried by the Bearer scheme. It reports
+// false when the header is absent; an empty credential stays the caller's 401.
+func bearerToken(header string) (string, bool) {
+	if header == "Bearer" {
+		return "", true
+	}
+	value, ok := strings.CutPrefix(header, "Bearer ")
+	return value, ok
+}
+
+// Session authenticates the browser session cookie only. API keys are
+// rejected so a stolen key cannot manage credentials or terminate sessions.
 func Session(
 	authenticate func(context.Context, string) (identity.User, string, error),
 	publicURL string,
 ) core.HandlerFunc {
 	return func(c *core.Context) {
-		session, _ := c.Cookie("forge_session")
-		u, csrf, err := authenticate(c.Request.Context(), session)
-		if err != nil {
-			Fail(c, err)
-			return
-		}
-		if c.Request.Method != "GET" && c.Request.Method != "HEAD" &&
-			(c.GetHeader("Origin") != publicURL || subtle.ConstantTimeCompare([]byte(c.GetHeader("X-CSRF-Token")), []byte(csrf)) != 1) {
-			Fail(c, apperror.New(403, "CSRF_REJECTED", "请求来源校验失败，请刷新页面"))
+		u, csrf, ok := authenticateSession(c, authenticate, publicURL)
+		if !ok {
 			return
 		}
 		c.Set("forge.user", u)
 		c.Set("forge.csrf", csrf)
+		c.Next()
+	}
+}
+
+// Identity accepts exactly one credential: the browser session cookie or a
+// user Bearer API key. Cookie requests keep the CSRF contract; API key calls
+// are non-browser traffic and skip it.
+func Identity(
+	authenticate func(context.Context, string) (identity.User, string, error),
+	apiKey func(context.Context, string) (identity.User, error),
+	publicURL string,
+) core.HandlerFunc {
+	return func(c *core.Context) {
+		token, hasBearer := bearerToken(c.GetHeader("Authorization"))
+		session, _ := c.Cookie("forge_session")
+		if hasBearer {
+			if session != "" {
+				Fail(c, apperror.New(400, "AMBIGUOUS_IDENTITY_PROOF", "身份证明只能使用一种凭据"))
+				return
+			}
+			if token == "" {
+				Fail(c, apperror.New(401, "AUTH_REQUIRED", "API key 无效"))
+				return
+			}
+			u, err := apiKey(c.Request.Context(), token)
+			if err != nil {
+				Fail(c, err)
+				return
+			}
+			c.Set("forge.user", u)
+			c.Next()
+			return
+		}
+		u, _, ok := authenticateSession(c, authenticate, publicURL)
+		if !ok {
+			return
+		}
+		c.Set("forge.user", u)
+		c.Next()
+	}
+}
+
+// ServiceAuth authenticates internal callers with their own service API key.
+func ServiceAuth(authenticate func(context.Context, string) (string, error)) core.HandlerFunc {
+	return func(c *core.Context) {
+		token, ok := bearerToken(c.GetHeader("Authorization"))
+		if !ok || token == "" {
+			Fail(c, apperror.New(401, "SERVICE_AUTH_REQUIRED", "服务身份校验失败"))
+			return
+		}
+		service, err := authenticate(c.Request.Context(), token)
+		if err != nil {
+			Fail(c, err)
+			return
+		}
+		c.Set("forge.service", service)
 		c.Next()
 	}
 }

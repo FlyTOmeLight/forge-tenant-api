@@ -15,7 +15,7 @@ import (
 
 func newTestClient(t *testing.T, endpoint string) *Client {
 	t.Helper()
-	client, err := New(Config{Endpoint: endpoint, ServiceToken: strings.Repeat("s", 32)})
+	client, err := New(Config{Endpoint: endpoint, ServiceAPIKey: strings.Repeat("s", 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,8 +32,8 @@ func TestRequestsAndResponses(t *testing.T) {
 		name, path, method, body, response string
 		invoke                             func(context.Context, *Client) error
 	}{
-		{name: "session", path: "/internal/v1/session/check", method: "POST", body: `{"session":"cookie","method":"POST","origin":"https://forge.test","csrf":"csrf"}`, response: `{"id":"user","name":"User","email":"user@example.test","operator":false}`, invoke: func(ctx context.Context, c *Client) error {
-			v, e := c.CheckSession(ctx, &CheckSessionRequest{Session: "cookie", Method: "POST", Origin: "https://forge.test", CSRF: "csrf"})
+		{name: "identity", path: "/internal/v1/identity/resolve", method: "POST", body: `{"type":"session","session":"cookie","method":"POST","origin":"https://forge.test","csrf":"csrf"}`, response: `{"id":"user","name":"User","email":"user@example.test","operator":false}`, invoke: func(ctx context.Context, c *Client) error {
+			v, e := c.ResolveIdentity(ctx, &ResolveIdentityRequest{Type: IdentityProofSession, Session: "cookie", Method: "POST", Origin: "https://forge.test", CSRF: "csrf"})
 			if e == nil && v.ID != "user" {
 				return errors.New("missing session identity")
 			}
@@ -100,6 +100,13 @@ func TestRequestsAndResponses(t *testing.T) {
 }
 
 func TestFailures(t *testing.T) {
+	if _, err := newTestClient(
+		t,
+		"https://example.test",
+	).ResolveIdentity(t.Context(), nil); err == nil ||
+		err.Error() != "ResolveIdentity request is required" {
+		t.Fatalf("unexpected nil request error: %v", err)
+	}
 	for _, tc := range []struct {
 		name, body, code string
 		status           int
@@ -116,7 +123,7 @@ func TestFailures(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			_, err := newTestClient(t, server.URL).CheckSession(t.Context(), &CheckSessionRequest{})
+			_, err := newTestClient(t, server.URL).ResolveIdentity(t.Context(), &ResolveIdentityRequest{})
 			var detail *Error
 			if !errors.As(err, &detail) || detail.Status != tc.status || detail.Code != tc.code ||
 				detail.RequestID != "trace-123" {
@@ -124,18 +131,24 @@ func TestFailures(t *testing.T) {
 			}
 		})
 	}
-	for _, body := range []string{"not JSON", "null", "{}", "{} {}"} {
-		t.Run(body, func(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{name: "not JSON", body: "not JSON"},
+		{name: "null", body: "null"},
+		{name: "empty object", body: "{}"},
+		{name: "missing user id", body: `{"name":"User","email":"user@example.test","operator":false}`},
+		{name: "multiple JSON values", body: "{} {}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(
 				http.HandlerFunc(
-					func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) },
+					func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tc.body)) },
 				),
 			)
 			defer server.Close()
 			if _, err := newTestClient(
 				t,
 				server.URL,
-			).CheckSession(t.Context(), &CheckSessionRequest{}); err == nil {
+			).ResolveIdentity(t.Context(), &ResolveIdentityRequest{}); err == nil {
 				t.Fatal("invalid successful response accepted")
 			}
 		})
@@ -144,31 +157,37 @@ func TestFailures(t *testing.T) {
 
 func TestCancellationTimeoutAndConcurrency(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in CheckSessionRequest
+		var in ResolveIdentityRequest
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if in.Session == "wait" {
 			<-r.Context().Done()
 			return
 		}
-		_ = json.NewEncoder(w).Encode(CheckSessionResponse{ID: in.Session})
+		_ = json.NewEncoder(w).Encode(Principal{ID: in.Session})
 	}))
 	defer server.Close()
 	c := newTestClient(t, server.URL)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := c.CheckSession(ctx, &CheckSessionRequest{Session: "wait"}); !errors.Is(err, context.Canceled) {
+	if _, err := c.ResolveIdentity(
+		ctx,
+		&ResolveIdentityRequest{Type: IdentityProofSession, Session: "wait"},
+	); !errors.Is(
+		err,
+		context.Canceled,
+	) {
 		t.Fatalf("lost cancellation: %v", err)
 	}
 	timeout, err := New(
-		Config{Endpoint: server.URL, ServiceToken: strings.Repeat("s", 32), Timeout: 20 * time.Millisecond},
+		Config{Endpoint: server.URL, ServiceAPIKey: strings.Repeat("s", 32), Timeout: 20 * time.Millisecond},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer timeout.Close()
-	if _, err = timeout.CheckSession(
+	if _, err = timeout.ResolveIdentity(
 		t.Context(),
-		&CheckSessionRequest{Session: "wait"},
+		&ResolveIdentityRequest{Type: IdentityProofSession, Session: "wait"},
 	); !errors.Is(
 		err,
 		context.DeadlineExceeded,
@@ -179,7 +198,10 @@ func TestCancellationTimeoutAndConcurrency(t *testing.T) {
 	for i := range 20 {
 		group.Go(func() {
 			session := fmt.Sprintf("session-%d", i)
-			response, err := c.CheckSession(t.Context(), &CheckSessionRequest{Session: session})
+			response, err := c.ResolveIdentity(
+				t.Context(),
+				&ResolveIdentityRequest{Type: IdentityProofSession, Session: session},
+			)
 			if err != nil || response.ID != session {
 				t.Errorf("shared request identity: %v", err)
 			}
@@ -188,8 +210,42 @@ func TestCancellationTimeoutAndConcurrency(t *testing.T) {
 	group.Wait()
 }
 
+func TestEndpointSchemes(t *testing.T) {
+	key := strings.Repeat("s", 32)
+	for _, tc := range []struct {
+		endpoint string
+		allowed  bool
+	}{
+		{endpoint: "https://forge.example.test", allowed: true},
+		{endpoint: "https://10.0.0.5:8443", allowed: true},
+		{endpoint: "http://127.0.0.1:8080", allowed: true},
+		{endpoint: "http://localhost:8080", allowed: true},
+		{endpoint: "http://[::1]:8080", allowed: true},
+		{endpoint: "http://forge.example.test", allowed: false},
+		{endpoint: "http://10.0.0.5:8080", allowed: false},
+		{endpoint: "http://[2001:db8::1]:8080", allowed: false},
+		{endpoint: "ftp://127.0.0.1", allowed: false},
+		{endpoint: "127.0.0.1:8080", allowed: false},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			client, err := New(Config{Endpoint: tc.endpoint, ServiceAPIKey: key})
+			if tc.allowed {
+				if err != nil {
+					t.Fatalf("endpoint rejected: %v", err)
+				}
+				_ = client.Close()
+				return
+			}
+			if err == nil {
+				_ = client.Close()
+				t.Fatal("endpoint accepted")
+			}
+		})
+	}
+}
+
 func TestConstructorAndRedirect(t *testing.T) {
-	for _, cfg := range []Config{{Endpoint: "relative", ServiceToken: strings.Repeat("s", 32)}, {Endpoint: "https://user:password@example.test", ServiceToken: strings.Repeat("s", 32)}, {Endpoint: "http://example.test?query=x", ServiceToken: strings.Repeat("s", 32)}, {Endpoint: "http://example.test", ServiceToken: "short"}, {Endpoint: "http://example.test", ServiceToken: strings.Repeat("s", 32), Timeout: -1}} {
+	for _, cfg := range []Config{{Endpoint: "relative", ServiceAPIKey: strings.Repeat("s", 32)}, {Endpoint: "https://user:password@example.test", ServiceAPIKey: strings.Repeat("s", 32)}, {Endpoint: "http://example.test?query=x", ServiceAPIKey: strings.Repeat("s", 32)}, {Endpoint: "http://example.test", ServiceAPIKey: "short"}, {Endpoint: "http://example.test", ServiceAPIKey: strings.Repeat("s", 32), Timeout: -1}} {
 		if c, err := New(cfg); err == nil {
 			_ = c.Close()
 			t.Fatal("invalid SDK configuration accepted")
@@ -203,7 +259,7 @@ func TestConstructorAndRedirect(t *testing.T) {
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 302) }),
 	)
 	defer server.Close()
-	_, err := newTestClient(t, server.URL).CheckSession(t.Context(), &CheckSessionRequest{})
+	_, err := newTestClient(t, server.URL).ResolveIdentity(t.Context(), &ResolveIdentityRequest{})
 	var failure *Error
 	if !errors.As(err, &failure) || failure.Status != 302 {
 		t.Fatalf("lost redirect status: %v", err)

@@ -1,5 +1,5 @@
 """Provision this application in the existing lab. Never print credentials."""
-import argparse, base64, json, os, pathlib, secrets, subprocess, time, urllib.error, urllib.parse, urllib.request
+import argparse, base64, json, pathlib, secrets, subprocess, time, urllib.error, urllib.parse, urllib.request
 p=argparse.ArgumentParser()
 p.add_argument('--lab-config',required=True)
 p.add_argument('--kubectl',default='kubectl')
@@ -13,7 +13,7 @@ lab=json.loads(pathlib.Path(a.lab_config).read_text())
 file=local/'deployment.json'
 if file.exists(): config=json.loads(file.read_text())
 else:
-    config={'databasePassword':secrets.token_hex(24),'appKey':secrets.token_hex(32),'serviceToken':secrets.token_hex(32),'oidcSecret':secrets.token_hex(24),'adminPassword':secrets.token_urlsafe(24),'adminUsername':'forge-admin','publicURL':a.public_url}
+    config={'databasePassword':secrets.token_hex(24),'appKey':secrets.token_hex(32),'oidcSecret':secrets.token_hex(24),'adminPassword':secrets.token_urlsafe(24),'adminUsername':'forge-admin','publicURL':a.public_url}
     file.write_text(json.dumps(config,indent=2));file.chmod(0o600)
 kube=[a.kubectl,'--context','orbstack']
 forward=subprocess.Popen(kube+['-n','tenant-lab','port-forward','--address','127.0.0.1','service/casdoor','8500:8000'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -42,7 +42,7 @@ finally:
 ns={'apiVersion':'v1','kind':'Namespace','metadata':{'name':a.namespace}}
 def apply(obj):subprocess.run(kube+['apply','-f','-'],input=json.dumps(obj).encode(),check=True,stdout=subprocess.DEVNULL)
 apply(ns)
-env={'DATABASE_URL':'postgres://forge:'+config['databasePassword']+'@forge-tenant-postgres:5432/forge?sslmode=disable','POSTGRES_PASSWORD':config['databasePassword'],'PUBLIC_URL':config['publicURL'],'OIDC_ISSUER':'https://identity.tenant-lab.svc.cluster.local:8080','OIDC_CLIENT_ID':a.oidc_client_id,'OIDC_CLIENT_SECRET':config['oidcSecret'],'CASDOOR_URL':'http://casdoor.tenant-lab.svc.cluster.local:8000','CASDOOR_CLIENT_ID':'tenant-lab-management','CASDOOR_SECRET':lab['managementSecret'],'CASDOOR_ORGANIZATION':'lab-identities','GITLAB_URL':'http://gitlab-webservice-default.tenant-lab.svc.cluster.local:8181','GITLAB_TOKEN':lab['gitlabToken'],'BOOTSTRAP_USERNAME':config['adminUsername'],'APP_KEY':config['appKey'],'SERVICE_TOKEN':config['serviceToken'],'CA_FILE':'/ca/ca.crt','MODEL_URL':os.environ.get('MODEL_URL','http://host.docker.internal:11434')}
+env={'DATABASE_URL':'postgres://forge:'+config['databasePassword']+'@forge-tenant-postgres:5432/forge?sslmode=disable','POSTGRES_PASSWORD':config['databasePassword'],'PUBLIC_URL':config['publicURL'],'OIDC_ISSUER':'https://identity.tenant-lab.svc.cluster.local:8080','OIDC_CLIENT_ID':a.oidc_client_id,'OIDC_CLIENT_SECRET':config['oidcSecret'],'CASDOOR_URL':'http://casdoor.tenant-lab.svc.cluster.local:8000','CASDOOR_CLIENT_ID':'tenant-lab-management','CASDOOR_SECRET':lab['managementSecret'],'CASDOOR_ORGANIZATION':'lab-identities','GITLAB_URL':'http://gitlab-webservice-default.tenant-lab.svc.cluster.local:8181','GITLAB_TOKEN':lab['gitlabToken'],'BOOTSTRAP_USERNAME':config['adminUsername'],'TENANT_ENCRYPTION_KEY':config['appKey'],'CA_FILE':'/ca/ca.crt'}
 apply({'apiVersion':'v1','kind':'Secret','metadata':{'name':'forge-tenant-env','namespace':a.namespace},'type':'Opaque','stringData':env})
 apply({'apiVersion':'v1','kind':'Secret','metadata':{'name':'forge-tenant-ca','namespace':a.namespace},'type':'Opaque','stringData':{'ca.crt':lab['caCert']}})
 print('Forge identity application, dedicated administrator and Kubernetes Secret references prepared.')

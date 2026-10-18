@@ -57,7 +57,7 @@ func TestArtifactInteropServer(t *testing.T) {
 	t.Cleanup(server.Close)
 	data, err := json.Marshal(map[string]string{
 		"endpoint":      server.URL,
-		"service_token": f.a.Account.Config.ServiceToken,
+		"service_token": f.a.ServiceKey,
 		"session":       f.operator,
 		"csrf":          identity.Hash(f.operator + ":csrf"),
 		"origin":        f.a.Account.Config.PublicURL,

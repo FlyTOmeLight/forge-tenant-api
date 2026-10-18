@@ -14,14 +14,17 @@ Level = "Info"
 [[Log.Outputs]]
 Type = "Console"
 
-[Forge]
-DatabaseURL = "${env: DATABASE_URL:}"
+[DB]
+Driver = "PostgreSQL"
+DSN = "${env: DATABASE_URL:}"
+MaxOpenConns = 12
+MaxIdleConns = 12
+
+[Tenant]
 PublicURL = "${env: PUBLIC_URL:}"
-BootstrapUser = "${env: BOOTSTRAP_USERNAME:}"
-AppKey = "${env: APP_KEY:}"
-ServiceToken = "${env: SERVICE_TOKEN:}"
 CAFile = "${env: CA_FILE:}"
-ModelURL = "${env: MODEL_URL:}"
+# Encrypts persisted idempotency responses. Keep the existing key value when renaming the environment variable.
+EncryptionKey = "${env: TENANT_ENCRYPTION_KEY:}"
 
 [Gitlab]
 URL = "${env: GITLAB_URL:}"
