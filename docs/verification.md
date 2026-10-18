@@ -2,7 +2,7 @@
 
 - SDK 增加标准 HTTP 与 server-go 的 `Authorization` 中间件。未提供 tenant/project 时保持 nil；提供范围必须校验有效成员和项目归属，项目路由显式配置 read/write/manage，缺少必要范围或权限时不执行 handler。用户身份只来自 Cookie/API key，忽略客户端自报用户头。
 - scope/resolve 支持用户 API key 与旧会话证明，返回已验证 principal；原有会话调用字段保持可用。项目 scope 成功只证明归属，不代替项目操作权限。
-- 使用现有本机 PostgreSQL 17.6 容器中的独立测试数据库运行 `GIN_MODE=release go test -tags=nomsgpack -race -count=1 ./...`，全仓通过；本轮 scope、凭据及授权数据库用例实际执行。需要 artifact-go 外部驱动的测试仍按其条件执行，不代表外部服务联调已完成。
+- 在本机 Kubernetes 集群的真实 PostgreSQL 17.6 上创建独立测试数据库，运行 `GIN_MODE=release go test -tags=nomsgpack -race -count=1 ./...`，全仓通过且无数据库用例跳过；`TestAuthorizationMiddlewareWithPostgres`（13 个子用例）、`TestScopeResolve`、`TestScopeResolveServiceAuthAndUntrustedUser` 均实际执行通过，测试数据库用完即删。需要 artifact-go 外部驱动的测试仍按其条件执行，不代表外部服务联调已完成。
 - 新增真实 HTTP + PostgreSQL 中间件回归：Cookie/API key、无范围、租户范围、项目写入、管理权限不足、同租户无授权项目、跨租户项目、成员移除、租户停用、用户禁用、key 撤销、项目撤权以及伪造 X-User-ID。
 - `go vet -tags=nomsgpack ./...`、`GOWORK=off go build -tags=nomsgpack` 和 `git diff --check` 通过。没有部署，未修改集群 Secret；真实 Casdoor/GitLab/其他微服务联调未执行。
 
@@ -70,7 +70,7 @@
 - 浏览器验收发现并修复成员权限报告字段大小写回归，加入真实 HTTP 契约测试；修正后的完整验收通过。JSON 成功响应改用框架 / Gin 渲染，字段与语义保留；公开写请求使用类型化绑定，未知字段或错误字段类型返回 400。
 - API 与同步 Worker 实际 SIGTERM 退出码均为 0；本轮 namespace、schema、新建 GitLab Group 与成员账号已清理。脱敏摘要见 `.local/app-evidence/result.json`。
 
-共享 `forge-tenant-split` 部署升级被自动审批拒绝，尚未切换；批准后可更新为已验收的 `forge-tenant-api:0.9.0` 镜像。
+共享联调 namespace 的部署升级被自动审批拒绝，尚未切换；批准后可更新为已验收的 `forge-tenant-api:0.9.0` 镜像。
 
 ## 2026-10-13：v0.8.1 数据库框架迁移
 
@@ -81,13 +81,13 @@
 - 独立 namespace / schema 中 migrate、bootstrap、API、Worker、数据库探针通过；真实 Casdoor / GitLab 浏览器验收 13 组通过。首轮降权确认时 GitLab 短暂返回旧权限 40，随后直接与有效权限均为 20；本地立即降到 20，完整流程第二次通过，未改动同步冲突判定或添加重试。升级最终框架与驱动后，再次完成全套 13 组验收。
 - API 与 Worker 的实际 SIGTERM 退出码均为 0；本轮测试 Group、账号、schema 和 namespace 已清理，脱敏摘要见 `.local/gorm-evidence/result.json`。
 
-正式 `forge-tenant-split` 后端 Helm release 已升级至 0.8.1（revision 33），API / Worker 均 1/1 Ready，发布后 `/healthz` 与 `/readyz` 通过。
+正式联调 namespace 的后端 Helm release 已升级至 0.8.1（revision 33），API / Worker 均 1/1 Ready，发布后 `/healthz` 与 `/readyz` 通过。
 
 ## 2026-10-13：v0.8.0 发布
 
 发布 server-go 重构、完整职责拆分及 Go SDK。下文记录真实 PostgreSQL、浏览器 13 组和镜像验证结果。
 
-本机 `forge-tenant-split` 的后端 Helm release `forge-tenant` 已升级至 Chart / 应用版本 0.8.0（revision 29），API 与 Worker 使用已验收的 `forge-tenant-api:0.8.0` 镜像。两者均为 1/1 Ready，Worker 重启次数为 0，迁移初始化退出码为 0；发布后 `/healthz` 和 `/readyz` 均通过。前端及其他服务依赖未调整。
+本机联调 namespace 的后端 Helm release `forge-tenant` 已升级至 Chart / 应用版本 0.8.0（revision 29），API 与 Worker 使用已验收的 `forge-tenant-api:0.8.0` 镜像。两者均为 1/1 Ready，Worker 重启次数为 0，迁移初始化退出码为 0；发布后 `/healthz` 和 `/readyz` 均通过。前端及其他服务依赖未调整。
 
 ## 2026-10-13：Go 服务调用 SDK
 
@@ -134,7 +134,7 @@ SDK 随根模块 v0.8.0 交付，其他服务仓库的依赖未修改。接入�
 
 ## 2026-10-05：Forge → GitLab 单点登录
 
-部署于 `forge-tenant-split`，API/Web 镜像为 `0.7.0-sso`。Forge 入口 `http://127.0.0.1:8483`，GitLab 入口 `http://127.0.0.1:18080`。GitLab 继续使用 Chart 10.4.1 / CE 19.4.1。
+部署于本机联调 namespace，API/Web 镜像为 `0.7.0-sso`。Forge 入口 `http://127.0.0.1:8483`，GitLab 入口 `http://127.0.0.1:18080`。GitLab 继续使用 Chart 10.4.1 / CE 19.4.1。
 
 - 先用真实 PostgreSQL 回归测试复现身份 Cookie 被丢弃，旧实现失败；修复后后端全部 `go test -tags=nomsgpack -race -count=1 ./...` 通过，无数据库跳过；Go vet、Helm lint 通过。
 - Vue 类型检查、生产构建和 Prettier 检查通过；前后端镜像构建通过。
@@ -163,7 +163,7 @@ SDK 随根模块 v0.8.0 交付，其他服务仓库的依赖未修改。接入�
 - 真实任务 smoke 5 组通过，包含创建、审查、项目配置与停止确认。没有运行模型或合并 MR。
 - 新增角色目录和个人权限页在 375 / 768 / 1440 宽度无页面横向溢出；实际成员权限截图已人工检查。
 
-部署在 OrbStack Kubernetes `forge-tenant-split`：后端镜像 `0.5.0-roles`，前端 `0.5.1-roles`，由独立 Helm release 发布。入口 `http://127.0.0.1:8483`。私有截图和原始结果位于前端 `.local/roles-evidence/`。
+部署在本机 Kubernetes 联调 namespace：后端镜像 `0.5.0-roles`，前端 `0.5.1-roles`，由独立 Helm release 发布。入口 `http://127.0.0.1:8483`。私有截图和原始结果位于前端 `.local/roles-evidence/`。
 
 当前提供固定内置角色，不包含自定义角色编辑。团队在 Forge 内管理，计算后的每人项目角色同步到 GitLab。数据库迁移移除成员单团队字段，前后端需配套发布；具体接口见后端 `docs/api.md`。
 
@@ -183,7 +183,7 @@ SDK 随根模块 v0.8.0 交付，其他服务仓库的依赖未修改。接入�
 - 真实 OIDC / Casdoor / GitLab CE 租户 E2E 11 组通过：邀请、授权同步、跨租户隔离、降权立即生效、继承冲突、停用恢复、统一身份登录和撤权事件。
 - 真实 GitLab 任务 smoke 5 组通过：任务关联、按代码版本认可、停止确认、配置检查与新建任务、响应式与焦点。测试使用协议客户端，没有运行模型或合并 MR。
 
-部署环境为 OrbStack Kubernetes `forge-tenant-split`，API 使用 `0.4.0-permissions`、Web 使用 `0.4.1-permissions` 镜像及独立 Helm release。入口为 `http://127.0.0.1:8483`。私有原始证据保存在前端 `.local/permission-evidence/`。
+部署环境为本机 Kubernetes 联调 namespace，API 使用 `0.4.0-permissions`、Web 使用 `0.4.1-permissions` 镜像及独立 Helm release。入口为 `http://127.0.0.1:8483`。私有原始证据保存在前端 `.local/permission-evidence/`。
 
 接口变更必须配套发布前后端：租户创建和停用移至 `/api/v1/platform/tenants`，全局连接移至 `/api/v1/platform/connections`，全局账号列表移至 `/api/v1/platform/users`；删除旧路径及 `can_manage`/`canManage` 字段。服务鉴权、撤权事件和执行器协议保持现有契约。
 
@@ -202,7 +202,7 @@ SDK 随根模块 v0.8.0 交付，其他服务仓库的依赖未修改。接入�
 - 真实 OIDC / Casdoor / GitLab CE 租户 E2E 11 组通过，涵盖邀请激活、跨企业统一身份与隔离、权限升降级、继承冲突、停用恢复、CSRF、账号登录 GitLab及撤权事件。
 - 真实 GitLab 任务 smoke 5 组通过：已有 MR 关联、绑定版本的人工认可、协议客户端领取与停止确认、项目配置检查、直接创建无 MR 任务及配置快照、取消队列、四档宽度与弹窗焦点。
 
-部署为 OrbStack Kubernetes 的 `forge-tenant-split` namespace，前后端独立 Helm release；浏览器入口 `http://127.0.0.1:8483`。原 `forge-tenant` 应用与旧仓库保留。验收期间发现测试令牌在 2026-10-04 到期，已将同一 `tenant-lab-verification` 令牌有效期延至 2026-10-11，未改变令牌值或权限。
+部署为本机 Kubernetes 的联调 namespace，前后端独立 Helm release；浏览器入口 `http://127.0.0.1:8483`。原 `forge-tenant` 应用与旧仓库保留。验收期间发现测试令牌在 2026-10-04 到期，已将同一验收令牌有效期延至 2026-10-11，未改变令牌值或权限。
 
 任务 smoke 使用协议客户端，不执行模型。`tests/whole-app-e2e.cjs` 已适配 Vue，但真实模型修复、Draft MR 交付和业务案例验收留给下一步，不能将原型结果当作实际执行证据。执行器能力边界见后端 `docs/coding-tasks.md`。
 
@@ -222,7 +222,7 @@ SDK 随根模块 v0.8.0 交付，其他服务仓库的依赖未修改。接入�
 - 两套 Docker 构建和 Helm release；后端镜像只包含 Go 程序与 CA，前端镜像只包含静态页面及 Nginx。
 - Gin 实际注册租户、成员、项目、认证与任务路由；后端 `/`、`/invite` 等页面地址返回 JSON 404，由前端提供页面。
 - 最终镜像：`forge-tenant-api:0.2.0-final`、`forge-tenant-web:0.2.0-final`。
-- OrbStack namespace：`forge-tenant-split`，独立数据库。浏览器入口：`http://127.0.0.1:8483`。
+- 本机 Kubernetes 联调 namespace，独立数据库。浏览器入口：`http://127.0.0.1:8483`。
 - 原仓库、原 namespace 与 8383 服务未覆盖；测试数据与原企业数据分开。原仓库后来新增的项目执行配置和直接创建问题任务未纳入。
 
 ## 静态与数据库验证
