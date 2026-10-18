@@ -47,27 +47,70 @@ func canWrite(ctx context.Context, endpoint, serviceAPIKey, userID, tenantID, pr
 
 ## 各端鉴权方式
 
-身份在入口确定后写入 context / Gin 键，内部链路只透传，不再重复问租户服务（除非入口本身就要解析凭据）。
+身份在入口确定后写入 context 和 Gin 键。内部链路只透传，不再回租户服务解析。
 
-| 调用方 | 请求上带什么 | 谁解析身份 | 业务服务安装的中间件 | 写入的 context / 键 |
+| 调用方 | 请求上带什么 | 谁解析身份 | 安装的中间件 | 写入的键 |
 | --- | --- | --- | --- | --- |
-| **前端（已登录）** | 可信网关注入 `x-forge-user-id`、`x-forge-tenant-id`、`x-forge-project-id`（可选 `x-forge-project-id`） | 入口服务用 server-go `auth.TrustedIdentityHeaders` 读头（须先校验网关，不能信任客户端自填） | 网关之后通常不再走本 SDK；若仍要项目权限，再接 `Authorization` / `MiddlewareAuthorization` | `KeyUserID`、`KeyTenantID`、`KeyProjectID`；不写 `KeyImpersonateOrigin*` |
-| **OpenAPI / 用户 API key** | `Authorization: Bearer ftk_...` 或 `forge_session` Cookie（二选一） | 本服务调租户 API：`ResolveIdentity` 或带 URL 范围的 `ResolveScope` + `CheckAccess` | `Identity` / `MiddlewareIdentity`（仅身份）或 `Authorization` / `MiddlewareAuthorization`（身份 + 租户/项目权限） | `Principal` + 可选 `AuthorizationContext`；server-go 侧还有 `KeyUserID` 等 |
-| **内部服务 → 内部服务** | 调用方 Bearer **服务** key + `x-impersonate-target-user-id` 等三个头（由上游 `internalsdk` 发出） | **下游不再**调 `ResolveIdentity`；只校验调用方是登记过的内部服务 | `MiddlewareInternalPropagation`（或自建认证 + `auth.InternalPropagatedIdentity`） | `Key*` 与 `KeyImpersonateOrigin*` 同为透传用户身份，`KeyAuthMode = Internal` |
+| **前端（已登录）** | 网关注入 `x-forge-user-id`、`x-forge-tenant-id`，可选 `x-forge-project-id` | 网关已解析，服务只校验网关凭据 | `MiddlewareTrustedIdentity` | `KeyUserID`、`KeyTenantID`、`KeyProjectID` |
+| **OpenAPI / 用户 API key** | `Authorization: Bearer ftk_...` 或 `forge_session` Cookie，二选一 | 本服务调租户 API | 仅需身份用 `Identity` / `MiddlewareIdentity`；需要租户或项目权限用 `Authorization` / `MiddlewareAuthorization` | `Principal`，范围通过时还有 `KeyTenantID`、`KeyProjectID` |
+| **内部服务调用** | 调用方的 Bearer 服务 key，加上 `x-impersonate-target-*` 三个头 | 上游已解析，下游只校验调用方是内部服务 | `MiddlewareServiceAuth`，需要透传身份时再加 `MiddlewareInternalPropagation` | `Key*` 与 `KeyImpersonateOrigin*` 同为透传的用户，`KeyAuthMode = Internal` |
 
-上游内部调用发送身份：server-go `internalsdk` 打开 `EnableImpersonate`，用 `Wrap(client, inboundCtx)` 发请求，把当前 `KeyUserID`、`KeyTenantID`、`KeyProjectID` 写到 `x-impersonate-target-*`。
+上游发送身份用 server-go `internalsdk`：打开 `EnableImpersonate`，`Wrap(client, inboundCtx)` 把当前 `KeyUserID`、`KeyTenantID`、`KeyProjectID` 写到 `x-impersonate-target-*`。
 
-## 中间件一览
+## 中间件一览与注册顺序
 
-| 中间件 | 运行环境 | 作用 | 典型路由 |
+同一路由只选一种身份来源。下面按注册顺序列出；靠前的先执行。
+
+**面向浏览器和 OpenAPI 的路由**，用 `Identity` 或 `Authorization` 二选一，不叠加：
+
+```go
+// net/http：仅需身份
+mux.Handle("/documents", tenantv1.Identity(client)(http.HandlerFunc(documents)))
+
+// net/http：身份加租户、项目权限
+mux.Handle("GET /tenants/{tid}/projects/{pid}/documents/{id}",
+    tenantv1.Authorization(tenantv1.AuthorizationConfig{
+        Client: client, Scope: projectScope, Action: tenantv1.AccessRead,
+    })(http.HandlerFunc(getDocument)))
+```
+
+Gin 上对应 `MiddlewareIdentity(client)` 和 `MiddlewareAuthorization(config)`。`MiddlewareIdentity` 是 `Identity` 的 Gin 形式，两者共用凭据提取和错误映射。
+
+**面向可信网关的路由**，网关已经注入 `x-forge-*`，服务不再问租户：
+
+```go
+trusted, err := tenantv1.MiddlewareTrustedIdentity(tenantv1.GatewayConfig{
+    Verify: verifyGateway, // 校验请求来自网关，不读取 x-forge-* 身份头
+})
+gateway := routes.Group("/api", trusted)
+```
+
+`GatewayConfig.Verify` 由接入方实现，必须证明请求来自网关，不能读取身份头本身。请求已带身份时返回 403，所以它必须放在 `MiddlewareIdentity` 之前，通常单独成组。
+
+**面向内部服务的路由**，先认证调用方，再采纳透传身份：
+
+```go
+serviceAuth := tenantv1.ServiceAuthConfig{
+    Authenticate: authenticateService, // 用服务 key 向 forge-tenant 换出调用方服务名
+}
+caller, err := tenantv1.MiddlewareServiceAuth(serviceAuth)
+propagation, err := tenantv1.MiddlewareInternalPropagation(serviceAuth)
+internal := routes.Group("/internal", caller, propagation)
+```
+
+顺序不能换：`MiddlewareInternalPropagation` 读取 `MiddlewareServiceAuth` 写入的调用方身份。只校验服务身份、不需要用户身份时，只装 `MiddlewareServiceAuth`。`ServiceAuthConfig.Authenticate` 由接入方实现，用调用方的服务 key 向 forge-tenant 换出服务名。凭据被拒绝时返回 `*tenantv1.Error` 且状态为 401，中间件保持 401；其余错误（超时、网络故障、租户服务 5xx）统一返回 503，便于调用方把基础设施故障和凭据拒绝区分开。`Authorize` 可选，用于拒绝特定调用方的透传。
+
+| 中间件 | 运行环境 | 作用 | 放在哪 |
 | --- | --- | --- | --- |
-| `Identity` | `net/http` | Cookie 或用户 API key → `ResolveIdentity` → `PrincipalFromContext` | 仅需知道“是谁” |
-| `Authorization` | `net/http` | 同上 + URL 租户/项目范围 + 项目 `Action` 权限 | `GET /tenants/{tid}/projects/{pid}/...` |
-| `MiddlewareIdentity` | server-go / Gin | 同 `Identity`，并写 `constants.KeyUserID` | Gin 上仅需身份 |
-| `MiddlewareAuthorization` | server-go / Gin | 同 `Authorization`，并写 `KeyUserID` / `KeyTenantID` / `KeyProjectID` | Gin 上带 `:tid`、`:pid` 的业务 API |
-| `MiddlewareInternalPropagation` | server-go / Gin | 校验内部服务 key，采纳 `x-impersonate-target-*` | `/internal/*` 等仅服务间入口 |
+| `Identity` | `net/http` | Cookie 或用户 API key 解析成 `Principal` | 浏览器 / OpenAPI 路由，与 `Authorization` 二选一 |
+| `Authorization` | `net/http` | 同上，再加 URL 范围和项目权限 | 带租户、项目的业务路由 |
+| `MiddlewareIdentity` | Gin | `Identity` 的 Gin 形式，写 `KeyUserID` | 同上 |
+| `MiddlewareAuthorization` | Gin | `Authorization` 的 Gin 形式，写 `KeyUserID`、`KeyTenantID`、`KeyProjectID` | 同上 |
+| `MiddlewareTrustedIdentity` | Gin | 校验网关后采纳 `x-forge-*` | 网关入口，单独成组，位于身份中间件之前 |
+| `MiddlewareServiceAuth` | Gin | 校验内部服务 key，写入调用方服务名 | 内部路由的第一个 |
+| `MiddlewareInternalPropagation` | Gin | 采纳 `x-impersonate-target-*` | 紧跟 `MiddlewareServiceAuth` |
 
-凭据规则（所有身份类中间件共用）：Cookie 与 Bearer **不能同时出现**（`400 AMBIGUOUS_IDENTITY_PROOF`）；用户头、query 里的 tenant/project **不能**当作身份或范围来源。
+凭据规则：Cookie 与 Bearer 不能同时出现，返回 `400 AMBIGUOUS_IDENTITY_PROOF`；`X-User-ID`、`X-Tenant-ID`、`X-Project-ID` 这类用户头和 query 参数不能当作身份或范围来源。
 
 ## 身份中间件
 
@@ -78,7 +121,7 @@ client, err := tenantv1.New(tenantv1.Config{Endpoint: endpoint, ServiceAPIKey: s
 if err != nil {
     return err
 }
-handler := tenantv1.Identity(tenantv1.MiddlewareConfig{Client: client})(mux)
+handler := tenantv1.Identity(client)(mux)
 
 func documents(w http.ResponseWriter, r *http.Request) {
     principal, ok := tenantv1.PrincipalFromContext(r.Context())
@@ -92,11 +135,10 @@ func documents(w http.ResponseWriter, r *http.Request) {
 
 请求同时带 Cookie 和 Bearer 时返回 `400 AMBIGUOUS_IDENTITY_PROOF`，不猜测身份；缺少或无效凭据返回 401，写请求的 Origin / CSRF 不匹配返回 403，租户服务不可达、返回服务端错误或调用服务自身的 key 失效时返回 503，且不执行下游 handler。默认不缓存认证结果，每个请求都重新解析。
 
-**server-go / Gin** 使用 `MiddlewareIdentity`，效果与 `Identity` 相同，并写入 `constants.KeyUserID`：
+Gin 上用 `MiddlewareIdentity(client)`，效果相同并写入 `constants.KeyUserID`：
 
 ```go
-client, _ := tenantv1.New(tenantv1.Config{Endpoint: endpoint, ServiceAPIKey: serviceAPIKey})
-routes.GET("/me", tenantv1.MiddlewareIdentity(tenantv1.MiddlewareConfig{Client: client}), func(c *core.Context) {
+routes.GET("/me", tenantv1.MiddlewareIdentity(client), func(c *core.Context) {
     _ = c.GetString(constants.KeyUserID)
     principal, _ := tenantv1.PrincipalFromContext(c.Request.Context())
     _ = principal.ID
@@ -133,23 +175,6 @@ mux.Handle("GET /tenants/{tid}/projects/{pid}/documents/{id}",
 Cookie 和 Bearer 使用同一凭据提取规则；Cookie 转发原始 method、Origin 和 CSRF。用户 ID 只取已验证 Principal，`X-User-ID`、`X-Tenant-ID`、`X-Project-ID` 等用户头不作为范围或身份来源。未找到作用域保留 `404 SCOPE_NOT_FOUND`，无权限返回 403；服务调用失败、服务 key 被拒绝和响应身份／范围不一致返回脱敏的 503。任何失败均不进入业务 handler。
 
 `MiddlewareAuthorization(tenantv1.AuthorizationConfig)` 通过 `middleware.HTTPAuthorization` 接入标准 `Authorization` 逻辑：默认从 Gin 路由读取 `:tid`、`:pid`（`Params.Get`，区分“未提供”与空字符串）。也可自定义 `Scope` 回调。成功后写入 `constants.KeyUserID`，范围校验通过时写入 `KeyTenantID`、`KeyProjectID`；`AuthorizationFromContext` 仍可从 `c.Request.Context()` 读取 `Principal` 与 `Action`。
-
-### 内部服务之间的身份透传
-
-内部服务互相调用不回租户服务解析身份。上游通过 server-go `internalsdk`（`EnableImpersonate`）把 context 中已验证的 `KeyUserID`、`KeyTenantID`、`KeyProjectID` 写到下游请求的 `x-impersonate-target-*` 头；下游安装 `MiddlewareInternalPropagation` 采纳这个身份：
-
-```go
-propagation, err := tenantv1.MiddlewareInternalPropagation(tenantv1.InternalPropagationConfig{
-    ServiceTokens: map[string]string{
-        cfg.InternalCallerKey: "agentic-kit-api",
-    },
-})
-internal := routes.Group("/internal", propagation)
-```
-
-中间件先按 `ServiceTokens` 校验调用方的 Bearer 服务 key（常数时间比较），再把透传的租户、用户、项目同时写入 `constants.Key*` 和 `constants.KeyImpersonateOrigin*`，并把 `KeyAuthMode` 设为 `Internal`。origin 键就是“身份已由上游验证、无需再问租户服务”的标记；不带透传头时保留服务账号自身的身份。身份头只能来自通过服务 key 校验的调用方，服务 key 缺失或未知返回 401，透传头不完整或调用方被 `Authorize` 拒绝返回 403。
-
-需要自定义调用方校验（例如回租户服务动态验证）时，不使用本中间件，直接安装自己的调用方认证后接 server-go 的 `auth.InternalPropagatedIdentity`。上游侧的透传发送见 server-go `internalsdk`；前端登录态和 OpenAPI 凭据仍分别走 `Identity` / `MiddlewareIdentity` 与 `Authorization` / `MiddlewareAuthorization`。
 
 ```go
 routes.GET("/tenants/:tid/projects/:pid/documents/:id",

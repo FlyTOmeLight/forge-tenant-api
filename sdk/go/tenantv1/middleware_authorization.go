@@ -54,33 +54,21 @@ func MiddlewareAuthorization(config AuthorizationConfig) core.HandlerFunc {
 }
 
 // MiddlewareIdentity resolves the caller through forge-tenant and publishes the principal
-// on both Gin keys and the request context.
-func MiddlewareIdentity(config MiddlewareConfig) core.HandlerFunc {
-	cookie := config.SessionCookie
-	if cookie == "" {
-		cookie = DefaultSessionCookie
-	}
+// on both Gin keys and the request context. It is the Gin form of Identity; both share
+// RequestProof and the error mapping, so cookie, bearer and failure behaviour match.
+func MiddlewareIdentity(client *Client) core.HandlerFunc {
+	handler := Identity(client)
 	return func(c *core.Context) {
-		proof, err := RequestProof(c.Request, cookie)
-		if err == nil {
-			var principal *Principal
-			if principal, err = config.Client.ResolveIdentity(c.Request.Context(), proof); err == nil {
-				ctx := WithPrincipal(c.Request.Context(), principal)
-				c.Request = c.Request.WithContext(ctx)
-				c.Set(constants.KeyUserID, principal.ID)
-				c.Next()
-				return
-			}
+		done := false
+		handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			done = true
+			principal, _ := PrincipalFromContext(r.Context())
+			c.Request = r
+			c.Set(constants.KeyUserID, principal.ID)
+			c.Next()
+		})).ServeHTTP(c.Writer, c.Request)
+		if !done {
+			c.Abort()
 		}
-		status, code := IdentityFailure(err)
-		c.AbortWithStatusJSON(
-			status,
-			map[string]any{
-				"error": map[string]any{
-					"code":    code,
-					"message": IdentityErrorMessage(err),
-				},
-			},
-		)
 	}
 }

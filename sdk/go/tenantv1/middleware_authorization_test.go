@@ -244,7 +244,7 @@ func TestMiddlewareIdentityPublishesSameUserOnGinAndContext(t *testing.T) {
 
 	handled := 0
 	engine := gin.New()
-	engine.GET("/resource", MiddlewareIdentity(MiddlewareConfig{Client: client}), func(c *core.Context) {
+	engine.GET("/resource", MiddlewareIdentity(client), func(c *core.Context) {
 		handled++
 		ginUser := c.GetString(constants.KeyUserID)
 		principal, ok := PrincipalFromContext(c.Request.Context())

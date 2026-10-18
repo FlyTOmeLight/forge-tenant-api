@@ -48,7 +48,7 @@ func TestIdentityMiddlewarePrincipal(t *testing.T) {
 					t.Errorf("unexpected principal: %+v, %v", principal, ok)
 				}
 			})
-			handler := Identity(MiddlewareConfig{Client: newTestClient(t, server.URL)})(next)
+			handler := Identity(newTestClient(t, server.URL))(next)
 			request := httptest.NewRequest(tc.method, "http://service.test/resource", nil)
 			if tc.session != "" {
 				request.AddCookie(&http.Cookie{Name: DefaultSessionCookie, Value: tc.session})
@@ -153,7 +153,7 @@ func TestIdentityMiddlewareFailures(t *testing.T) {
 			}
 			nextCalled := false
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { nextCalled = true })
-			handler := Identity(MiddlewareConfig{Client: newTestClient(t, server.URL)})(next)
+			handler := Identity(newTestClient(t, server.URL))(next)
 			request := httptest.NewRequest(http.MethodPost, "http://service.test/resource", nil)
 			if tc.session != "" {
 				request.AddCookie(&http.Cookie{Name: DefaultSessionCookie, Value: tc.session})

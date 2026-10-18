@@ -1,6 +1,7 @@
 package tenantv1
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,7 +18,7 @@ const (
 	propagationPersonToken  = "ordinary-person-token-000001"
 )
 
-func newPropagationEngine(t *testing.T, config InternalPropagationConfig) *gin.Engine {
+func newPropagationEngine(t *testing.T, config ServiceAuthConfig) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	handler, err := MiddlewareInternalPropagation(config)
@@ -52,7 +53,7 @@ func propagationRequest(token, tenant, user, project string) *http.Request {
 }
 
 func TestMiddlewareInternalPropagation(t *testing.T) {
-	if _, err := MiddlewareInternalPropagation(InternalPropagationConfig{}); err == nil {
+	if _, err := MiddlewareInternalPropagation(ServiceAuthConfig{}); err == nil {
 		t.Fatal("empty service tokens accepted")
 	}
 	for _, tc := range []struct {
@@ -80,10 +81,20 @@ func TestMiddlewareInternalPropagation(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			config := InternalPropagationConfig{
-				ServiceTokens: map[string]string{
-					propagationServiceToken: "agentic-kit-api",
-					propagationPersonToken:  "person",
+			config := ServiceAuthConfig{
+				Authenticate: func(_ context.Context, token string) (string, error) {
+					switch token {
+					case propagationServiceToken:
+						return "agentic-kit-api", nil
+					case propagationPersonToken:
+						return "person", nil
+					default:
+						return "", &Error{
+							Status:  http.StatusUnauthorized,
+							Code:    "SERVICE_AUTH_REQUIRED",
+							Message: "unknown service token",
+						}
+					}
 				},
 			}
 			if tc.authorize {
