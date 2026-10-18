@@ -17,8 +17,7 @@ type Scope struct {
 
 // AuthorizationConfig declares the requirements of a server route.
 type AuthorizationConfig struct {
-	Client        *Client
-	SessionCookie string
+	Client *Client
 
 	// Scope must extract only URL parameters, never headers or request bodies.
 	// The net/http adapter requires this callback, even for identity-only routes.
@@ -98,11 +97,7 @@ func (config AuthorizationConfig) authorize(r *http.Request) (*AuthorizationCont
 	if scope.ProjectID != nil && config.Action == "" {
 		return nil, errors.New("project authorization requires a configured action")
 	}
-	cookie := config.SessionCookie
-	if cookie == "" {
-		cookie = DefaultSessionCookie
-	}
-	proof, err := RequestProof(r, cookie)
+	proof, err := RequestProof(r, DefaultSessionCookie)
 	if err != nil {
 		return nil, err
 	}

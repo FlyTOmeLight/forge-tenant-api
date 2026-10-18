@@ -424,7 +424,7 @@ func TestDownstreamMiddlewareResolvesIdentity(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	reached := false
-	downstream := tenantv1.Identity(tenantv1.MiddlewareConfig{Client: client})(
+	downstream := tenantv1.Identity(client)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reached = true
 			principal, ok := tenantv1.PrincipalFromContext(r.Context())
@@ -486,7 +486,7 @@ func TestDownstreamMiddlewareResolvesIdentity(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = dead.Close() })
 	reached = false
-	handler := tenantv1.Identity(tenantv1.MiddlewareConfig{Client: dead})(
+	handler := tenantv1.Identity(dead)(
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }),
 	)
 	r := httptest.NewRequest("GET", "/documents", nil)

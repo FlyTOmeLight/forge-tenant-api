@@ -107,7 +107,7 @@ func TestAuthorizationIdentityAndScope(t *testing.T) {
 				)
 				defer server.Close()
 				config := AuthorizationConfig{
-					Client: newTestClient(t, server.URL), SessionCookie: "custom_session",
+					Client:        newTestClient(t, server.URL),
 					Scope:         func(*http.Request) (Scope, error) { return scope, nil },
 					RequireTenant: action == "tenant", Action: permission,
 				}
@@ -144,7 +144,7 @@ func TestAuthorizationIdentityAndScope(t *testing.T) {
 				request.Header.Set("X-Project-ID", "forged")
 				request.Header.Set("X-Access-Action", "manage")
 				if credential == "cookie" {
-					request.AddCookie(&http.Cookie{Name: "custom_session", Value: "session"})
+					request.AddCookie(&http.Cookie{Name: DefaultSessionCookie, Value: "session"})
 					request.Header.Set("Origin", proof.Origin)
 					request.Header.Set("X-CSRF-Token", proof.CSRF)
 				} else {

@@ -12,28 +12,16 @@ const DefaultSessionCookie = "forge_session"
 
 const identityUnavailableMessage = "identity service is temporarily unavailable"
 
-// MiddlewareConfig configures the identity middleware.
-type MiddlewareConfig struct {
-	Client *Client
-
-	// SessionCookie overrides the browser session cookie name.
-	SessionCookie string
-}
-
 // Identity resolves the incoming browser session or user API key against
 // forge-tenant and injects the Principal into the request context. Requests
 // without a valid identity never reach next.
-func Identity(config MiddlewareConfig) func(http.Handler) http.Handler {
-	cookie := config.SessionCookie
-	if cookie == "" {
-		cookie = DefaultSessionCookie
-	}
+func Identity(client *Client) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			proof, err := RequestProof(r, cookie)
+			proof, err := RequestProof(r, DefaultSessionCookie)
 			if err == nil {
 				var principal *Principal
-				if principal, err = config.Client.ResolveIdentity(r.Context(), proof); err == nil {
+				if principal, err = client.ResolveIdentity(r.Context(), proof); err == nil {
 					next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), principal)))
 					return
 				}
