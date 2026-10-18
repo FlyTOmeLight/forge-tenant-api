@@ -10,9 +10,8 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/credential"
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
-
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/identity"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/table"
 	"github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1"
 )
 
@@ -244,12 +243,14 @@ func TestCredentialRevocationDoesNotDependOnListLimit(t *testing.T) {
 	var id string
 	if err := f.a.DB.WithContext(f.ctx).Raw(
 		`UPDATE credentials SET created_at=now()-interval '1 day' WHERE owner_kind='user' AND user_id='member' RETURNING id`,
-	).Row().Scan(&id); err != nil {
+	).
+		Row().Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.a.DB.WithContext(f.ctx).Exec(
 		`INSERT INTO credentials(id,owner_kind,user_id,name,secret_hash,expires_at) SELECT 'extra_'||n,'user','member','extra','extra_hash_'||n,now()+interval '1 day' FROM generate_series(1,201) n`,
-	).Error; err != nil {
+	).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	items, err := credential.New(f.a.DB).ListUser(f.ctx, "member")
@@ -269,14 +270,20 @@ func TestCredentialRevocationDoesNotDependOnListLimit(t *testing.T) {
 		t.Fatalf("old credential still accepted: %d", status)
 	}
 	var revokedAt time.Time
-	if err := f.a.DB.WithContext(f.ctx).Raw(`SELECT revoked_at FROM credentials WHERE id=?`, id).Row().Scan(&revokedAt); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT revoked_at FROM credentials WHERE id=?`, id).
+		Row().
+		Scan(&revokedAt); err != nil {
 		t.Fatal(err)
 	}
 	if status, body := f.call(t, f.member, "DELETE", path, nil, 0, ""); status != 200 {
 		t.Fatalf("repeated revoke failed: %d %v", status, body)
 	}
 	var repeatedAt time.Time
-	if err := f.a.DB.WithContext(f.ctx).Raw(`SELECT revoked_at FROM credentials WHERE id=?`, id).Row().Scan(&repeatedAt); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT revoked_at FROM credentials WHERE id=?`, id).
+		Row().
+		Scan(&repeatedAt); err != nil {
 		t.Fatal(err)
 	}
 	if !revokedAt.Equal(repeatedAt) {
@@ -288,7 +295,10 @@ func TestServiceCredentialRevocationStaysWithinServiceOwners(t *testing.T) {
 	f := setup(t)
 	credentials := credential.New(f.a.DB)
 	var userID, serviceID string
-	if err := f.a.DB.WithContext(f.ctx).Raw(`SELECT id FROM credentials WHERE secret_hash=?`, identity.Hash(f.a.userKey)).Row().Scan(&userID); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT id FROM credentials WHERE secret_hash=?`, identity.Hash(f.a.userKey)).
+		Row().
+		Scan(&userID); err != nil {
 		t.Fatal(err)
 	}
 	if revoked, err := credentials.RevokeService(f.ctx, userID); err != nil || revoked {
@@ -297,13 +307,21 @@ func TestServiceCredentialRevocationStaysWithinServiceOwners(t *testing.T) {
 	if status, _ := f.read(t, f.a.userKey, "/api/v1/tenants"); status != 200 {
 		t.Fatalf("user credential affected by service revoke: %d", status)
 	}
-	if err := f.a.DB.WithContext(f.ctx).Raw(`SELECT id FROM credentials WHERE secret_hash=?`, identity.Hash(f.a.ServiceKey)).Row().Scan(&serviceID); err != nil {
+	if err := f.a.DB.WithContext(f.ctx).
+		Raw(`SELECT id FROM credentials WHERE secret_hash=?`, identity.Hash(f.a.ServiceKey)).
+		Row().
+		Scan(&serviceID); err != nil {
 		t.Fatal(err)
 	}
 	if revoked, err := credentials.RevokeService(f.ctx, serviceID); err != nil || !revoked {
 		t.Fatalf("service revoke failed: %v %v", revoked, err)
 	}
-	if status, body := f.internal(t, "/internal/v1/identity/resolve", Object{"type": "session", "session": f.member, "method": "GET"}); status != 401 || code(t, body) != "SERVICE_AUTH_REQUIRED" {
+	if status, body := f.internal(
+		t,
+		"/internal/v1/identity/resolve",
+		Object{"type": "session", "session": f.member, "method": "GET"},
+	); status != 401 ||
+		code(t, body) != "SERVICE_AUTH_REQUIRED" {
 		t.Fatalf("revoked service credential accepted: %d %v", status, body)
 	}
 }
@@ -320,7 +338,17 @@ func TestCredentialOwnerConstraints(t *testing.T) {
 		{name: "no owner", kind: "service"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := table.InsertCredential(f.ctx, f.a.DB, identity.ID("cr"), tc.kind, tc.user, tc.service, "invalid", identity.Hash(identity.Token()), time.Now().Add(time.Hour))
+			_, err := table.InsertCredential(
+				f.ctx,
+				f.a.DB,
+				identity.ID("cr"),
+				tc.kind,
+				tc.user,
+				tc.service,
+				"invalid",
+				identity.Hash(identity.Token()),
+				time.Now().Add(time.Hour),
+			)
 			if err == nil {
 				t.Fatal("invalid credential owner accepted")
 			}

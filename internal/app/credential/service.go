@@ -73,8 +73,14 @@ func (a *Service) IssueUser(
 		return nil, err
 	}
 	return &Issued{
-		Metadata: Metadata{ID: id, Name: name, CreatedAt: time.Now().UTC(), ExpiresAt: expiresAt, UserID: userID},
-		Token:    token,
+		Metadata: Metadata{
+			ID:        id,
+			Name:      name,
+			CreatedAt: time.Now().UTC(),
+			ExpiresAt: expiresAt,
+			UserID:    userID,
+		},
+		Token: token,
 	}, nil
 }
 

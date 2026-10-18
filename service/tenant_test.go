@@ -45,7 +45,8 @@ type testApplication struct {
 
 	// ServiceKey authenticates internal calls; userKey belongs to the member.
 	ServiceKey string
-	userKey    string
+
+	userKey string
 }
 
 type fixture struct {

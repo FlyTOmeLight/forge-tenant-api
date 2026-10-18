@@ -35,13 +35,21 @@ func TestIdentityCredentialSelectionAndCSRF(t *testing.T) {
 			engine.Use(Identity(
 				func(_ context.Context, session string) (identity.User, string, error) {
 					if session != "session" {
-						return identity.User{}, "", apperror.New(401, "AUTH_REQUIRED", "invalid session")
+						return identity.User{}, "", apperror.New(
+							401,
+							"AUTH_REQUIRED",
+							"invalid session",
+						)
 					}
 					return identity.User{ID: "user"}, "csrf", nil
 				},
 				func(_ context.Context, token string) (identity.User, error) {
 					if token != "key" {
-						return identity.User{}, apperror.New(401, "AUTH_REQUIRED", "invalid key")
+						return identity.User{}, apperror.New(
+							401,
+							"AUTH_REQUIRED",
+							"invalid key",
+						)
 					}
 					return identity.User{ID: "user"}, nil
 				},

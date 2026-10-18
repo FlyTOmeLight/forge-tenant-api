@@ -25,7 +25,8 @@ func TestIdentityPublishesSameUserOnGinAndContext(t *testing.T) {
 		if in.Type != tenantv1.IdentityProofAPIKey || in.APIKey != "user-api-key" {
 			t.Errorf("unexpected identity proof: %+v", in)
 		}
-		_ = json.NewEncoder(w).Encode(tenantv1.Principal{ID: "user-1", Name: "User", Email: "user@example.test"})
+		_ = json.NewEncoder(w).
+			Encode(tenantv1.Principal{ID: "user-1", Name: "User", Email: "user@example.test"})
 	}))
 	defer tenant.Close()
 	client := newTenantClient(t, tenant.URL)
@@ -85,9 +86,13 @@ func TestIdentityRejectionSkipsHandler(t *testing.T) {
 
 			handled := false
 			engine := gin.New()
-			engine.GET("/resource", Identity(tenantv1.MiddlewareConfig{Client: client}), func(c *core.Context) {
-				handled = true
-			})
+			engine.GET(
+				"/resource",
+				Identity(tenantv1.MiddlewareConfig{Client: client}),
+				func(c *core.Context) {
+					handled = true
+				},
+			)
 			request := httptest.NewRequest(http.MethodGet, "http://service.test/resource", nil)
 			if tc.authorization != "" {
 				request.Header.Set("Authorization", tc.authorization)

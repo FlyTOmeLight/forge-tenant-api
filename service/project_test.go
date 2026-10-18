@@ -28,7 +28,13 @@ func TestIdentityResolveRequiresCSRFAndServiceIdentity(t *testing.T) {
 		want                        int
 	}{{token: "", method: "GET", origin: "", csrf: "", want: 401}, {token: f.a.ServiceKey, method: "GET", origin: "", csrf: "", want: 200}, {token: f.a.ServiceKey, method: "POST", origin: f.a.Account.Config.PublicURL, csrf: "bad", want: 403}, {token: f.a.ServiceKey, method: "POST", origin: "https://evil.test", csrf: identity.Hash(f.operator + ":csrf"), want: 403}, {token: f.a.ServiceKey, method: "POST", origin: f.a.Account.Config.PublicURL, csrf: identity.Hash(f.operator + ":csrf"), want: 200}} {
 		b, _ := json.Marshal(
-			Object{"type": "session", "session": f.operator, "method": tc.method, "origin": tc.origin, "csrf": tc.csrf},
+			Object{
+				"type":    "session",
+				"session": f.operator,
+				"method":  tc.method,
+				"origin":  tc.origin,
+				"csrf":    tc.csrf,
+			},
 		)
 		r := httptest.NewRequest("POST", "/internal/v1/identity/resolve", bytes.NewReader(b))
 		r.Header.Set("Authorization", "Bearer "+tc.token)

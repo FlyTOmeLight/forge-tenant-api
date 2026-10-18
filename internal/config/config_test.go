@@ -156,7 +156,11 @@ func TestServerTOMLExternalServices(t *testing.T) {
 		},
 	}
 	if !reflect.DeepEqual(cfg, want) {
-		t.Fatalf("server TOML did not map environment variables to typed sections\ngot:  %#v\nwant: %#v", cfg, want)
+		t.Fatalf(
+			"server TOML did not map environment variables to typed sections\ngot:  %#v\nwant: %#v",
+			cfg,
+			want,
+		)
 	}
 }
 

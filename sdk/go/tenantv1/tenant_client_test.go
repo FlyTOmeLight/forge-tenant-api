@@ -100,7 +100,11 @@ func TestRequestsAndResponses(t *testing.T) {
 }
 
 func TestFailures(t *testing.T) {
-	if _, err := newTestClient(t, "https://example.test").ResolveIdentity(t.Context(), nil); err == nil || err.Error() != "ResolveIdentity request is required" {
+	if _, err := newTestClient(
+		t,
+		"https://example.test",
+	).ResolveIdentity(t.Context(), nil); err == nil ||
+		err.Error() != "ResolveIdentity request is required" {
 		t.Fatalf("unexpected nil request error: %v", err)
 	}
 	for _, tc := range []struct {
@@ -165,7 +169,13 @@ func TestCancellationTimeoutAndConcurrency(t *testing.T) {
 	c := newTestClient(t, server.URL)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := c.ResolveIdentity(ctx, &ResolveIdentityRequest{Type: IdentityProofSession, Session: "wait"}); !errors.Is(err, context.Canceled) {
+	if _, err := c.ResolveIdentity(
+		ctx,
+		&ResolveIdentityRequest{Type: IdentityProofSession, Session: "wait"},
+	); !errors.Is(
+		err,
+		context.Canceled,
+	) {
 		t.Fatalf("lost cancellation: %v", err)
 	}
 	timeout, err := New(
@@ -188,7 +198,10 @@ func TestCancellationTimeoutAndConcurrency(t *testing.T) {
 	for i := range 20 {
 		group.Go(func() {
 			session := fmt.Sprintf("session-%d", i)
-			response, err := c.ResolveIdentity(t.Context(), &ResolveIdentityRequest{Type: IdentityProofSession, Session: session})
+			response, err := c.ResolveIdentity(
+				t.Context(),
+				&ResolveIdentityRequest{Type: IdentityProofSession, Session: session},
+			)
 			if err != nil || response.ID != session {
 				t.Errorf("shared request identity: %v", err)
 			}
