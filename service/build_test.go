@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/FlyTOmeLight/server-go/conf"
+	frameworkdb "github.com/FlyTOmeLight/server-go/db"
 	"github.com/FlyTOmeLight/server-go/host"
 	"github.com/FlyTOmeLight/server-go/logger"
 	"gorm.io/gorm"
@@ -25,9 +26,9 @@ import (
 
 func assemblyConfig(dsn, issuer string) Config {
 	return Config{
-		Forge: ForgeConfig{
-			DatabaseURL: dsn, PublicURL: "http://127.0.0.1:8383",
-			AppKey: strings.Repeat("ab", 32), ServiceToken: strings.Repeat("s", 32),
+		DB: frameworkdb.Config{DSN: dsn},
+		Tenant: TenantConfig{
+			PublicURL: "http://127.0.0.1:8383", EncryptionKey: strings.Repeat("ab", 32),
 		},
 		Gitlab: GitlabConfig{URL: issuer, Token: "test-token"},
 		Casdoor: CasdoorConfig{
@@ -96,7 +97,7 @@ func assertBorrowedDBOpen(t *testing.T, database *gorm.DB) {
 func TestNewAPIHTTPHostAndBorrowedDatabase(t *testing.T) {
 	f := setup(t)
 	server, closed := discoveryServer(t)
-	api, err := NewAPI(f.ctx, f.a.DB, assemblyConfig(f.a.Config.DatabaseURL, server.URL))
+	api, err := NewAPI(f.ctx, f.a.DB, assemblyConfig(f.a.Config.DB.DSN, server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,29 +130,29 @@ func TestNewAPIHTTPHostAndBorrowedDatabase(t *testing.T) {
 }
 
 func TestNewAPIInitializationErrors(t *testing.T) {
-	for _, name := range []string{"missing database", "invalid config", "missing CA", "discovery failure", "invalid app key"} {
+	for _, name := range []string{"missing database", "missing encryption key", "missing CA", "discovery failure", "invalid encryption key"} {
 		t.Run(name, func(t *testing.T) {
 			server, closed := discoveryServer(t)
-			cfg := assemblyConfig("postgres://unused/test", server.URL)
+			cfg := assemblyConfig("", server.URL)
 			database := &gorm.DB{}
 			want := ""
 			switch name {
 			case "missing database":
 				database, want = nil, "requires a database"
-			case "invalid config":
-				cfg.Forge.ServiceToken, want = "short", "SERVICE_TOKEN"
+			case "missing encryption key":
+				cfg.Tenant.EncryptionKey, want = "", "TENANT_ENCRYPTION_KEY"
 			case "missing CA":
-				cfg.Forge.CAFile, want = filepath.Join(t.TempDir(), "missing.pem"), "missing.pem"
+				cfg.Tenant.CAFile, want = filepath.Join(t.TempDir(), "missing.pem"), "missing.pem"
 			case "discovery failure":
 				cfg.Casdoor.Issuer, want = server.URL+"/missing", "404"
-			case "invalid app key":
-				cfg.Forge.AppKey, want = "invalid", "APP_KEY"
+			case "invalid encryption key":
+				cfg.Tenant.EncryptionKey, want = "invalid", "TENANT_ENCRYPTION_KEY"
 			}
 			api, err := NewAPI(t.Context(), database, cfg)
 			if api != nil || err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("NewAPI returned %v, %v; want error containing %q", api, err, want)
 			}
-			if name == "discovery failure" || name == "invalid app key" {
+			if name == "discovery failure" {
 				awaitTransportClosed(t, closed)
 			}
 		})
@@ -163,7 +164,7 @@ func TestNewWorkerStopReleasesTransportAndBorrowsDatabase(t *testing.T) {
 	for _, started := range []bool{false, true} {
 		t.Run(fmt.Sprintf("started=%t", started), func(t *testing.T) {
 			server, closed := discoveryServer(t)
-			worker, err := NewWorker(f.a.DB, assemblyConfig(f.a.Config.DatabaseURL, server.URL))
+			worker, err := NewWorker(f.a.DB, assemblyConfig(f.a.Config.DB.DSN, server.URL))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +209,7 @@ func TestRunMigrateDoesNotInitializeExternalClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = f.a.DB.Exec("DROP SCHEMA " + schema + " CASCADE").Error })
-	dsn, err := url.Parse(f.a.Config.DatabaseURL)
+	dsn, err := url.Parse(f.a.Config.DB.DSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,11 +222,11 @@ AppCode = 101
 RunMode = "release"
 [Log]
 Level = "Info"
-[Forge]
-DatabaseURL = %q
+[DB]
+DSN = %q
+[Tenant]
 PublicURL = "http://127.0.0.1:8383"
-AppKey = %q
-ServiceToken = %q
+EncryptionKey = %q
 CAFile = %q
 [Gitlab]
 URL = "http://127.0.0.1:1"
@@ -238,7 +239,7 @@ Organization = "test"
 Issuer = "http://127.0.0.1:1"
 OIDCClientID = "test"
 OIDCClientSecret = "test"
-`, dsn.String(), strings.Repeat("ab", 32), strings.Repeat("s", 32), filepath.Join(t.TempDir(), "missing.pem"))
+`, dsn.String(), strings.Repeat("ab", 32), filepath.Join(t.TempDir(), "missing.pem"))
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}

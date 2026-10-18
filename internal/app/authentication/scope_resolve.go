@@ -23,10 +23,7 @@ func (a *Service) ResolveScope(
 	if in.Method == "" || strings.IndexFunc(in.Method, func(r rune) bool { return r < 'A' || r > 'Z' }) >= 0 {
 		return nil, apperror.New(422, "INVALID_SCOPE", "需要原始 HTTP 请求方法")
 	}
-	user, err := a.CheckSession(
-		ctx,
-		tenantv1.CheckSessionRequest{Session: in.Session, Method: in.Method, Origin: in.Origin, CSRF: in.CSRF},
-	)
+	user, err := a.authenticateSessionProof(ctx, in.Session, in.Method, in.Origin, in.CSRF)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -61,7 +62,7 @@ func TestScopeResolve(t *testing.T) {
 			server := httptest.NewServer(apiHandler(t, f.a))
 			defer server.Close()
 			sdk, err := tenantv1.New(
-				tenantv1.Config{Endpoint: server.URL, ServiceToken: f.a.Account.Config.ServiceToken},
+				tenantv1.Config{Endpoint: server.URL, ServiceAPIKey: f.a.ServiceKey},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -115,9 +116,10 @@ func TestScopeResolveServiceAuthAndUntrustedUser(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, credential string
 		want                   int
+		code                   string
 	}{
-		{name: "no bearer", body: `{}`, credential: "", want: 401},
-		{name: "self reported user", body: `{"session":"s","method":"GET","tenant_id":"t","user_id":"operator"}`, credential: "Bearer " + f.a.Account.Config.ServiceToken, want: 400},
+		{name: "no bearer", body: `{}`, credential: "", want: 401, code: "SERVICE_AUTH_REQUIRED"},
+		{name: "self reported user", body: `{"session":"s","method":"GET","tenant_id":"t","user_id":"operator"}`, credential: "Bearer " + f.a.ServiceKey, want: 400, code: "INVALID_JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(
@@ -128,8 +130,12 @@ func TestScopeResolveServiceAuthAndUntrustedUser(t *testing.T) {
 			r.Header.Set("Authorization", tc.credential)
 			w := httptest.NewRecorder()
 			apiHandler(t, f.a).ServeHTTP(w, r)
-			if w.Code != tc.want {
-				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			out := Object{}
+			if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+				t.Fatalf("non-JSON response status %d", w.Code)
+			}
+			if w.Code != tc.want || code(t, out) != tc.code {
+				t.Fatalf("want %d %s: %s", tc.want, tc.code, w.Body.String())
 			}
 		})
 	}

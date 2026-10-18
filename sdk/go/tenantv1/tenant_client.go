@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,8 +17,10 @@ import (
 )
 
 type Config struct {
-	Endpoint     string
-	ServiceToken string
+	Endpoint string
+
+	// ServiceAPIKey is this service's own forge-tenant API key.
+	ServiceAPIKey string
 
 	// Timeout defaults to 15 seconds. Calls also respect their context deadline.
 	Timeout time.Duration
@@ -27,17 +30,17 @@ type Client struct{ transport *frameworksdk.Client }
 
 func New(config Config) (*Client, error) {
 	endpoint, err := url.Parse(config.Endpoint)
-	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+	if err != nil || endpoint.Host == "" || !allowedEndpointScheme(endpoint) ||
 		endpoint.User != nil ||
 		endpoint.RawQuery != "" ||
 		endpoint.Fragment != "" {
 		return nil, errors.New(
-			"tenant SDK endpoint must be an absolute HTTP or HTTPS URL without credentials, query or fragment",
+			"tenant SDK endpoint must be an absolute HTTPS URL, or HTTP for a loopback host, without credentials, query or fragment",
 		)
 	}
-	if len(config.ServiceToken) < 32 || strings.ContainsAny(config.ServiceToken, "\r\n") {
+	if len(config.ServiceAPIKey) < 32 || strings.ContainsAny(config.ServiceAPIKey, "\r\n") {
 		return nil, errors.New(
-			"tenant SDK service token must contain at least 32 characters and no line breaks",
+			"tenant SDK service API key must contain at least 32 characters and no line breaks",
 		)
 	}
 	if config.Timeout < 0 {
@@ -51,7 +54,7 @@ func New(config Config) (*Client, error) {
 			Endpoint: strings.TrimRight(config.Endpoint, "/"),
 			Credentials: &frameworksdk.Credentials{
 				AuthType: frameworksdk.AuthTypeAPIKey,
-				APIKey:   config.ServiceToken,
+				APIKey:   config.ServiceAPIKey,
 			},
 		},
 	)
@@ -65,6 +68,21 @@ func New(config Config) (*Client, error) {
 
 // Close releases the client's connections after its callers have finished.
 func (c *Client) Close() error { return c.transport.Close() }
+
+// allowedEndpointScheme accepts HTTPS to any host. Plain HTTP is accepted only
+// for a loopback host, so service API keys never travel in cleartext to a
+// remote peer.
+func allowedEndpointScheme(endpoint *url.URL) bool {
+	switch endpoint.Scheme {
+	case "https":
+		return true
+	case "http":
+		host := endpoint.Hostname()
+		return host == "localhost" || net.ParseIP(host).IsLoopback()
+	default:
+		return false
+	}
+}
 
 // Error is an HTTP failure. Network and context errors keep their original identity.
 type Error struct {

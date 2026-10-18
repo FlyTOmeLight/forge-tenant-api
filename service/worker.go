@@ -92,6 +92,9 @@ func NewWorker(database *gorm.DB, cfg Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := c.RequireWorker(); err != nil {
+		return nil, err
+	}
 	transport, err := client.NewHTTP(c.CAFile)
 	if err != nil {
 		return nil, err

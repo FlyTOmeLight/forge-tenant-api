@@ -27,10 +27,10 @@ type Writer struct {
 	cipher cipher.AEAD
 }
 
-func New(db *gorm.DB, appKey string) (*Writer, error) {
-	key, err := hex.DecodeString(appKey)
+func New(db *gorm.DB, encryptionKey string) (*Writer, error) {
+	key, err := hex.DecodeString(encryptionKey)
 	if err != nil || len(key) != 32 {
-		return nil, errors.New("APP_KEY must be a 32-byte hex key")
+		return nil, errors.New("TENANT_ENCRYPTION_KEY must be a 32-byte hex key")
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {

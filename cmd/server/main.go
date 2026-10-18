@@ -28,6 +28,9 @@ func run() error {
 	if mode == "gitlab-credential-status" {
 		return service.CredentialStatus(ctx, os.Stdout)
 	}
+	if mode == "service-credential" {
+		return service.ServiceCredentialAdmin(ctx, os.Stdout, os.Args[2:])
+	}
 	if mode == "bucket-backfill" {
 		return service.RunBucketMaintenance(ctx, mode, "")
 	}

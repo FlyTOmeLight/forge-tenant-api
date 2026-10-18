@@ -1,6 +1,6 @@
 # Forge 租户 API 项目背景
 
-核对日期：2026-10-14。当前源码与接口契约决定实现事实；本文件保存决策、用户纠正与未完成边界。docs/verification.md 的部署及验收结果仅代表记录当时的状态。
+核对日期：2026-10-18。当前源码与接口契约决定实现事实；本文件保存决策、用户纠正与未完成边界。docs/verification.md 的部署及验收结果仅代表记录当时的状态。
 
 ## 职责与设计决策
 
@@ -11,6 +11,8 @@
 完整重构需按业务职责拆 internal/app、按实际表名拆 internal/table，不能只调整入口和装配。公开 service/ 负责构造与生命周期，cmd/server 负责命令、信号和退出码。API 使用 server-go app.Run / Build；Worker、migrate、bootstrap 按自身依赖装配。Worker 退出后才释放数据库；NewAPI / NewWorker 借用调用方数据库，拥有各自 HTTP 连接。
 
 连接由 server-go/db.Module 管理，查询和事务使用 GORM；业务写入、幂等、审计和 outbox 保持同一事务，共用机制归 internal/tenantwrite。Controller、业务 Service、表查询与外部客户端各有职责。GitLab、Casdoor 优先使用官方 SDK，配置归顶层 [Gitlab] / [Casdoor]。现有 Casdoor 实例传输适配负责请求取消、私有 CA 和脱敏，弥补 SDK 缺少请求级 context 与独立 HTTP 客户端的边界。服务调用契约见 sdk/go/tenantv1。
+
+2026-10-18 配置与身份改造：配置按用途拆为 `[DB]`（server-go `db.Config`：驱动、DSN、连接池）和 `[Tenant]`（`PublicURL`、出站 `CAFile`、幂等响应加密密钥 `EncryptionKey`）；原 `[Forge]` 整节、`ModelURL` 与全局 `ServiceToken` 删除。加密密钥环境变量由 `APP_KEY` 改为 `TENANT_ENCRYPTION_KEY`，部署时只改变量名、值必须沿用原值，否则历史幂等响应无法解密。`BootstrapUser` 移出配置，只由 bootstrap 命令读 `BOOTSTRAP_USERNAME`。服务间调用改为每个服务一把数据库凭据（`credentials` 表，Bearer `ftk_...`，只存 SHA-256 摘要，可单独轮换撤销），`/internal/v1/session/check` 由 `/internal/v1/identity/resolve` 取代；公开业务路由同时接受 `forge_session` Cookie 和用户 API key，凭据管理仅限 Cookie 会话。本轮不做 AK/SK 签名，凭据不绑定租户或项目，权限仍每次实时检查。本轮只验收本仓库，其他仓库的接入另行处理。
 
 ## 最终用户纠正尚未落实
 

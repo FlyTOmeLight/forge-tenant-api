@@ -9,6 +9,6 @@ func (h *Controller) RegisterRoutes(root, session, internal *core.RouterGroup) {
 	root.POST("/api/login", h.identityProxy)
 	session.POST("/auth/logout", h.logout)
 	session.GET("/api/v1/me", h.me)
-	internal.POST("/session/check", h.checkSession)
+	internal.POST("/identity/resolve", h.resolveIdentity)
 	internal.POST("/scope/resolve", h.resolveScope)
 }

@@ -13,7 +13,7 @@ ManagementToken = "<独立的 storage tenant-service 管理凭据>"
 Timeout = "15s"
 ```
 
-部署模板提供 `STORAGE_URL` 和 `STORAGE_MANAGEMENT_TOKEN`，默认禁用。管理凭据必须至少 32 字符、无空白，并且不同于 Forge `ServiceToken`。URL 为 HTTPS origin（仅本机测试允许 loopback HTTP），不得携带用户名、密码、查询或路径。可通过现有 Forge.CAFile 配置私有 CA；不跳过证书校验。请求超时可设置为 1s–1m，默认 15s。管理 HTTP 不跟随重定向、不使用 CookieJar。
+部署模板提供 `STORAGE_URL` 和 `STORAGE_MANAGEMENT_TOKEN`，默认禁用。管理凭据必须至少 32 字符且不含空白。URL 为 HTTPS origin（仅本机测试允许 loopback HTTP），不得携带用户名、密码、查询或路径。可通过 `[Tenant].CAFile` 配置私有 CA；不跳过证书校验。请求超时可设置为 1s–1m，默认 15s。管理 HTTP 不跟随重定向、不使用 CookieJar。
 
 worker 在短事务内用 `FOR UPDATE SKIP LOCKED` 领取一项任务，事务外请求 `POST /v1/storage/tenant-buckets`，JSON 为 `{"tenantID":"t_..."}`，使用上述独立 Bearer。成功响应必须返回相同 tenantID、非空 backendID 与 bucket。凭据只来自配置，不写入任务；失败记录不保存远端响应正文或含敏感信息的请求错误。未引用 artifact 整个 Go 模块，避免其新框架依赖向 tenant 引入版本耦合；此处只实现这一条管理 wire 契约。
 

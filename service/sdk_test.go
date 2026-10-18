@@ -14,18 +14,22 @@ func TestSDKServiceIntegration(t *testing.T) {
 	f := setupProject(t)
 	server := httptest.NewServer(apiHandler(t, f.a))
 	defer server.Close()
-	sdk, err := tenantv1.New(tenantv1.Config{Endpoint: server.URL, ServiceToken: f.a.Account.Config.ServiceToken})
+	sdk, err := tenantv1.New(tenantv1.Config{Endpoint: server.URL, ServiceAPIKey: f.a.ServiceKey})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sdk.Close()
-	session, err := sdk.CheckSession(f.ctx, &tenantv1.CheckSessionRequest{Session: f.member, Method: "GET"})
-	if err != nil || session.ID != "member" {
-		t.Fatalf("session: %v", err)
+	principal, err := sdk.ResolveIdentity(f.ctx, &tenantv1.ResolveIdentityRequest{
+		Type: tenantv1.IdentityProofSession, Session: f.member, Method: "GET",
+	})
+	if err != nil || principal == nil || principal.ID != "member" || principal.Name != "member" ||
+		principal.Email != "u1@example.test" || principal.Operator {
+		t.Fatalf("identity: %+v %v", principal, err)
 	}
-	_, err = sdk.CheckSession(
+	_, err = sdk.ResolveIdentity(
 		f.ctx,
-		&tenantv1.CheckSessionRequest{
+		&tenantv1.ResolveIdentityRequest{
+			Type:    tenantv1.IdentityProofSession,
 			Session: f.member,
 			Method:  "POST",
 			Origin:  f.a.Account.Config.PublicURL,
@@ -37,9 +41,10 @@ func TestSDKServiceIntegration(t *testing.T) {
 		failure.RequestID == "" {
 		t.Fatalf("CSRF error contract: %v", err)
 	}
-	_, err = sdk.CheckSession(
+	_, err = sdk.ResolveIdentity(
 		f.ctx,
-		&tenantv1.CheckSessionRequest{
+		&tenantv1.ResolveIdentityRequest{
+			Type:    tenantv1.IdentityProofSession,
 			Session: f.member,
 			Method:  "POST",
 			Origin:  f.a.Account.Config.PublicURL,

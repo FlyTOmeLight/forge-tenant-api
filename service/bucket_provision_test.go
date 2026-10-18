@@ -205,7 +205,7 @@ func TestBucketWorkerIndependentOfGitLab(t *testing.T) {
 		http.Error(w, "gitlab unavailable", 503)
 	}))
 	defer server.Close()
-	cfg := assemblyConfig(f.a.Config.DatabaseURL, server.URL)
+	cfg := assemblyConfig(f.a.Config.DB.DSN, server.URL)
 	cfg.Storage = StorageConfig{URL: server.URL, ManagementToken: strings.Repeat("m", 32), Timeout: time.Second}
 	worker, err := NewWorker(f.a.DB, cfg)
 	if err != nil {

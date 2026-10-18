@@ -123,13 +123,13 @@ func (h *Controller) me(c *core.Context) {
 	)
 }
 
-func (h *Controller) checkSession(c *core.Context) {
-	var req tenantv1.CheckSessionRequest
+func (h *Controller) resolveIdentity(c *core.Context) {
+	var req tenantv1.ResolveIdentityRequest
 	if err := httpapi.Bind(c, &req); err != nil {
 		httpapi.Fail(c, err)
 		return
 	}
-	result, err := h.service.CheckSession(c.Request.Context(), req)
+	result, err := h.service.ResolveIdentity(c.Request.Context(), req)
 	if err != nil {
 		httpapi.Fail(c, err)
 		return

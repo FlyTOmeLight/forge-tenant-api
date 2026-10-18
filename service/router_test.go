@@ -14,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/authentication"
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/config"
 )
 
 func TestAPIDoesNotServeFrontend(t *testing.T) {
@@ -68,19 +67,19 @@ func apiHandler(t *testing.T, app *testApplication, extra ...host.Service) http.
 }
 
 func TestFrameworkBindingAndServiceAuthentication(t *testing.T) {
-	app := &testApplication{Config: config.Config{ServiceToken: strings.Repeat("s", 32)}}
-	handler := apiHandler(t, app)
+	f := setup(t)
 	for _, tc := range []struct {
 		name, credential, body string
 		status                 int
 		code                   string
 	}{
 		{name: "missing bearer", credential: "", body: `{}`, status: 401, code: "SERVICE_AUTH_REQUIRED"},
-		{name: "raw token rejected", credential: app.Config.ServiceToken, body: `{}`, status: 401, code: "SERVICE_AUTH_REQUIRED"},
+		{name: "raw token rejected", credential: f.a.ServiceKey, body: `{}`, status: 401, code: "SERVICE_AUTH_REQUIRED"},
 		{name: "wrong bearer", credential: "Bearer wrong", body: `{}`, status: 401, code: "SERVICE_AUTH_REQUIRED"},
-		{name: "unknown field", credential: "Bearer " + app.Config.ServiceToken, body: `{"user_id":"u","tenant_id":"t","extra":true}`, status: 400, code: "INVALID_JSON"},
-		{name: "multiple documents", credential: "Bearer " + app.Config.ServiceToken, body: `{} {}`, status: 400, code: "INVALID_JSON"},
-		{name: "oversized", credential: "Bearer " + app.Config.ServiceToken, body: `{"user_id":"` + strings.Repeat("x", 65536) + `"}`, status: 400, code: "INVALID_JSON"},
+		{name: "user API key rejected", credential: "Bearer " + f.a.userKey, body: `{}`, status: 401, code: "SERVICE_AUTH_REQUIRED"},
+		{name: "unknown field", credential: "Bearer " + f.a.ServiceKey, body: `{"user_id":"u","tenant_id":"t","extra":true}`, status: 400, code: "INVALID_JSON"},
+		{name: "multiple documents", credential: "Bearer " + f.a.ServiceKey, body: `{} {}`, status: 400, code: "INVALID_JSON"},
+		{name: "oversized", credential: "Bearer " + f.a.ServiceKey, body: `{"user_id":"` + strings.Repeat("x", 65536) + `"}`, status: 400, code: "INVALID_JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := httptest.NewRequest(
@@ -90,7 +89,7 @@ func TestFrameworkBindingAndServiceAuthentication(t *testing.T) {
 			)
 			request.Header.Set("Authorization", tc.credential)
 			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, request)
+			apiHandler(t, f.a).ServeHTTP(w, request)
 			var response struct {
 				Error struct {
 					Code string `json:"code"`

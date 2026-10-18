@@ -23,11 +23,13 @@ func New(db *gorm.DB, c config.Config, casdoor *client.Casdoor) *Service {
 	return &Service{DB: db, Config: c, Casdoor: casdoor}
 }
 
-func (a *Service) Bootstrap(ctx context.Context) error {
-	if a.Config.BootstrapUser == "" {
-		return nil
+// Bootstrap registers one Casdoor user as the Forge operator. The username
+// comes from the bootstrap maintenance command, never from service config.
+func (a *Service) Bootstrap(ctx context.Context, username string) error {
+	if username == "" {
+		return errors.New("bootstrap requires BOOTSTRAP_USERNAME")
 	}
-	u, e := a.Casdoor.User(ctx, a.Config.BootstrapUser)
+	u, e := a.Casdoor.User(ctx, username)
 	if e != nil {
 		return e
 	}

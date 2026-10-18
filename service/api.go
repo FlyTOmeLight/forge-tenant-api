@@ -12,6 +12,7 @@ import (
 
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/authentication"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/authorization"
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/credential"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/invitation"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/member"
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/app/project"
@@ -41,7 +42,10 @@ type API struct {
 	synchronization *synchronization.Controller
 	workspaces      *workspace.Controller
 	authorization   *authorization.Controller
+	credentials     *credential.Controller
 	session         core.HandlerFunc
+	identity        core.HandlerFunc
+	serviceAuth     core.HandlerFunc
 }
 
 var _ host.Service = (*API)(nil)
@@ -61,7 +65,10 @@ func newAPI(database *gorm.DB, cfg config.Config, accounts *authentication.Servi
 		workspaces:      workspace.NewController(workspace.New(database, permissions)),
 		authorization:   authorization.NewController(permissions),
 		synchronization: synchronization.NewController(synchronization.NewRetryService(writes)),
+		credentials:     credential.NewController(credential.New(database)),
 		session:         httpapi.Session(accounts.Authenticate, cfg.PublicURL),
+		identity:        httpapi.Identity(accounts.Authenticate, accounts.AuthenticateAPIKey, cfg.PublicURL),
+		serviceAuth:     httpapi.ServiceAuth(accounts.AuthenticateService),
 	}
 }
 
@@ -98,6 +105,9 @@ func NewAPI(ctx context.Context, database *gorm.DB, cfg Config) (*API, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := c.RequireAPI(); err != nil {
+		return nil, err
+	}
 	transport, err := client.NewHTTP(c.CAFile)
 	if err != nil {
 		return nil, err
@@ -108,7 +118,7 @@ func NewAPI(ctx context.Context, database *gorm.DB, cfg Config) (*API, error) {
 		return nil, err
 	}
 	accounts := authentication.New(database, c, newCasdoor(c, transport), oidc)
-	writes, err := tenantwrite.New(database, c.AppKey)
+	writes, err := tenantwrite.New(database, c.EncryptionKey)
 	if err != nil {
 		transport.CloseIdleConnections()
 		return nil, err

@@ -21,16 +21,16 @@ func setupProject(t *testing.T) *fixture {
 	return f
 }
 
-func TestServiceSessionRequiresCSRFAndServiceIdentity(t *testing.T) {
+func TestIdentityResolveRequiresCSRFAndServiceIdentity(t *testing.T) {
 	f := setup(t)
 	for _, tc := range []struct {
 		token, method, origin, csrf string
 		want                        int
-	}{{token: "", method: "GET", origin: "", csrf: "", want: 401}, {token: f.a.Account.Config.ServiceToken, method: "GET", origin: "", csrf: "", want: 200}, {token: f.a.Account.Config.ServiceToken, method: "POST", origin: f.a.Account.Config.PublicURL, csrf: "bad", want: 403}, {token: f.a.Account.Config.ServiceToken, method: "POST", origin: "https://evil.test", csrf: identity.Hash(f.operator + ":csrf"), want: 403}, {token: f.a.Account.Config.ServiceToken, method: "POST", origin: f.a.Account.Config.PublicURL, csrf: identity.Hash(f.operator + ":csrf"), want: 200}} {
+	}{{token: "", method: "GET", origin: "", csrf: "", want: 401}, {token: f.a.ServiceKey, method: "GET", origin: "", csrf: "", want: 200}, {token: f.a.ServiceKey, method: "POST", origin: f.a.Account.Config.PublicURL, csrf: "bad", want: 403}, {token: f.a.ServiceKey, method: "POST", origin: "https://evil.test", csrf: identity.Hash(f.operator + ":csrf"), want: 403}, {token: f.a.ServiceKey, method: "POST", origin: f.a.Account.Config.PublicURL, csrf: identity.Hash(f.operator + ":csrf"), want: 200}} {
 		b, _ := json.Marshal(
-			Object{"session": f.operator, "method": tc.method, "origin": tc.origin, "csrf": tc.csrf},
+			Object{"type": "session", "session": f.operator, "method": tc.method, "origin": tc.origin, "csrf": tc.csrf},
 		)
-		r := httptest.NewRequest("POST", "/internal/v1/session/check", bytes.NewReader(b))
+		r := httptest.NewRequest("POST", "/internal/v1/identity/resolve", bytes.NewReader(b))
 		r.Header.Set("Authorization", "Bearer "+tc.token)
 		w := httptest.NewRecorder()
 		apiHandler(t, f.a).ServeHTTP(w, r)

@@ -24,7 +24,7 @@ func TestWorkspaceMembershipDoesNotRequireRepositoryGrant(t *testing.T) {
 		return out
 	}
 	call("member", "t", "", 401)
-	out := call("member", "t", f.a.Account.Config.ServiceToken, 200)
+	out := call("member", "t", f.a.ServiceKey, 200)
 	if len(out["projects"].([]any)) != 1 {
 		t.Fatal(out)
 	}
@@ -33,15 +33,15 @@ func TestWorkspaceMembershipDoesNotRequireRepositoryGrant(t *testing.T) {
 		Error; err != nil {
 		t.Fatal(err)
 	}
-	out = call("member", "t", f.a.Account.Config.ServiceToken, 200)
+	out = call("member", "t", f.a.ServiceKey, 200)
 	if len(out["projects"].([]any)) != 0 || out["canEdit"] != true {
 		t.Fatal(out)
 	}
-	call("member", "foreign", f.a.Account.Config.ServiceToken, 403)
+	call("member", "foreign", f.a.ServiceKey, 403)
 	if err := f.a.DB.WithContext(f.ctx).
 		Exec("UPDATE memberships SET status='removed' WHERE id='mm'").
 		Error; err != nil {
 		t.Fatal(err)
 	}
-	call("member", "t", f.a.Account.Config.ServiceToken, 403)
+	call("member", "t", f.a.ServiceKey, 403)
 }
