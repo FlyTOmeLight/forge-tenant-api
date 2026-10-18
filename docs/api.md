@@ -134,7 +134,7 @@ Controller 使用原生 Gin，公开写操作绑定明确的请求结构；未�
 
 导入 `github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1`，使用 `tenantv1.New(Config{Endpoint, ServiceAPIKey, Timeout})` 构造客户端，`ServiceAPIKey` 是本服务自己的服务 API key。方法与接口逐一对应：`ResolveIdentity`、`ResolveScope`、`CheckWorkspace`、`ResolveProject`、`CheckAccess`、`ListAccessEvents`。请求、响应类型由 SDK 与服务端共用，现有字段名称和无授权时的响应保持不变。
 
-SDK 还提供 `tenantv1.Identity(MiddlewareConfig{Client, SessionCookie})`：从入站请求提取 Cookie 或用户 Bearer API key，调用 `ResolveIdentity` 并把 `*Principal` 注入 request context，业务代码用 `PrincipalFromContext` 读取；server-go 项目使用 `tenantv1.GinIdentity` 或 `tenantv1.GinAuthorization`，通过 `middleware.HTTPAuthorization` 适配并写入 `KeyUserID`、`KeyTenantID`、`KeyProjectID` 与 request context。缺少或无效凭据返回 401，CSRF 失败返回 403，租户服务不可达返回 503 且不执行下游 handler，默认不缓存认证结果。
+SDK 还提供 `tenantv1.Identity(MiddlewareConfig{Client, SessionCookie})`：从入站请求提取 Cookie 或用户 Bearer API key，调用 `ResolveIdentity` 并把 `*Principal` 注入 request context，业务代码用 `PrincipalFromContext` 读取；server-go 项目使用 `tenantv1.GinIdentity` 或 `tenantv1.GinAuthorization`，通过 `middleware.HTTPAuthorization` 适配并写入 `KeyUserID`、`KeyOrgID`、`KeyTenantID`、`KeyProjectID` 与 request context。缺少或无效凭据返回 401，CSRF 失败返回 403，租户服务不可达返回 503 且不执行下游 handler，默认不缓存认证结果。
 
 `*tenantv1.Error` 保留实际 HTTP 状态、业务代码、消息和 Request-ID；网络与 context 错误保留错误身份。默认超时 15 秒，无自动重试或重定向。调用示例、资源关闭和游标责任见 [SDK 接入说明](../sdk/go/tenantv1/README.md)。
 
