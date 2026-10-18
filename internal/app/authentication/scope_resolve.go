@@ -23,7 +23,14 @@ func (a *Service) ResolveScope(
 	if in.Method == "" || strings.IndexFunc(in.Method, func(r rune) bool { return r < 'A' || r > 'Z' }) >= 0 {
 		return nil, apperror.New(422, "INVALID_SCOPE", "需要原始 HTTP 请求方法")
 	}
-	user, err := a.authenticateSessionProof(ctx, in.Session, in.Method, in.Origin, in.CSRF)
+	proofType := in.Type
+	if proofType == "" {
+		proofType = tenantv1.IdentityProofSession
+	}
+	user, err := a.ResolveIdentity(ctx, tenantv1.ResolveIdentityRequest{
+		Type: proofType, Session: in.Session, APIKey: in.APIKey,
+		Method: in.Method, Origin: in.Origin, CSRF: in.CSRF,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +62,7 @@ func (a *Service) ResolveScope(
 		}
 	}
 	return &tenantv1.ResolveScopeResponse{
+		Principal:      user,
 		UserID:         user.ID,
 		TenantID:       in.TenantID,
 		ProjectID:      in.ProjectID,

@@ -1,6 +1,10 @@
 package tenantv1
 
 type ResolveScopeRequest struct {
+	// Type defaults to session for existing scope callers.
+	Type string `json:"type,omitempty"`
+
+	APIKey    string  `json:"api_key,omitempty"`
 	Session   string  `json:"session"`
 	Method    string  `json:"method"`
 	Origin    string  `json:"origin"`
@@ -10,8 +14,9 @@ type ResolveScopeRequest struct {
 }
 
 type ResolveScopeResponse struct {
-	UserID         string  `json:"user_id"`
-	TenantID       string  `json:"tenant_id"`
-	ProjectID      *string `json:"project_id"`
-	OwnershipState string  `json:"ownership_state"`
+	Principal      *Principal `json:"principal,omitempty"`
+	UserID         string     `json:"user_id"`
+	TenantID       string     `json:"tenant_id"`
+	ProjectID      *string    `json:"project_id"`
+	OwnershipState string     `json:"ownership_state"`
 }

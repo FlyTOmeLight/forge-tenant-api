@@ -28,7 +28,7 @@
 
 授权、成员生命周期和同步变更需运行真实 PostgreSQL 集成测试；缺少 TEST_DATABASE_URL 而跳过不算通过。浏览器验收归 forge-tenant-web/tests/e2e.cjs。
 
-2026-10-13 历史记录：v0.9.1 已发布且外部 SDK / 配置验收通过，运行环境未升级；v0.8.1 曾部署本机 OrbStack。实时版本需重新核实。forge-tenant-split 是本机 OrbStack 联调 namespace，后端 release 为 forge-tenant，前端为 forge-tenant-web，Casdoor / GitLab 位于 tenant-lab；不将其称为线上生产。私有配置及证据保留在忽略的 .local/，输出需脱敏。
+2026-10-13 历史记录：v0.9.1 已发布且外部 SDK / 配置验收通过，运行环境未升级；v0.8.1 曾部署本机 Kubernetes。实时版本需重新核实。本机 Kubernetes 联调 namespace 承载后端 release forge-tenant 与前端 forge-tenant-web，Casdoor / GitLab 位于身份服务 namespace；不将其称为线上生产。私有配置及证据保留在忽略的 .local/，输出需脱敏。
 
 ## 对话来源
 
