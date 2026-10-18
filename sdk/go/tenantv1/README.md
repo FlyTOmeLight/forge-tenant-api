@@ -97,7 +97,7 @@ mux.Handle("GET /tenants/{tid}/projects/{pid}/documents/{id}",
 
 Cookie 和 Bearer 使用同一凭据提取规则；Cookie 转发原始 method、Origin 和 CSRF。用户 ID 只取已验证 Principal，`X-User-ID`、`X-Tenant-ID`、`X-Project-ID` 等用户头不作为范围或身份来源。未找到作用域保留 `404 SCOPE_NOT_FOUND`，无权限返回 403；服务调用失败、服务 key 被拒绝和响应身份／范围不一致返回脱敏的 503。任何失败均不进入业务 handler。
 
-`GinAuthorization(tenantv1.AuthorizationConfig)` 默认读取路由 `:tid`、`:pid` 参数，使用 `Params.Get` 保留“未提供”的区别。默认不读取同名 query 参数；标准适配器如需 query 参数，回调必须显式处理缺失、空值和重复值。可提供自己的 Scope 回调替换默认提取方式。成功后会写入 `constants.KeyUserID`，并在范围校验通过时写入 `constants.KeyOrgID`、`constants.KeyTenantID` 与 `constants.KeyProjectID`；`AuthorizationFromContext` 返回 `Principal`、可选的 `TenantID` / `ProjectID` 和本次通过的 `Action`。
+`GinAuthorization(tenantv1.AuthorizationConfig)` 默认读取路由 `:tid`、`:pid` 参数，使用 `Params.Get` 保留“未提供”的区别。默认不读取同名 query 参数；标准适配器如需 query 参数，回调必须显式处理缺失、空值和重复值。可提供自己的 Scope 回调替换默认提取方式。成功后会写入 `constants.KeyUserID`，并在范围校验通过时写入 `constants.KeyTenantID` 与 `constants.KeyProjectID`；`AuthorizationFromContext` 返回 `Principal`、可选的 `TenantID` / `ProjectID` 和本次通过的 `Action`。
 
 ```go
 routes.GET("/tenants/:tid/projects/:pid/documents/:id",

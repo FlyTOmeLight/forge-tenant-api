@@ -107,7 +107,6 @@ func TestGinAuthorizationPublishesScope(t *testing.T) {
 				}
 				if tc.route == "/me" {
 					if auth.TenantID != nil || auth.ProjectID != nil ||
-						c.GetString(constants.KeyOrgID) != "" ||
 						c.GetString(constants.KeyTenantID) != "" ||
 						c.GetString(constants.KeyProjectID) != "" {
 						t.Errorf(
@@ -118,7 +117,6 @@ func TestGinAuthorizationPublishesScope(t *testing.T) {
 						)
 					}
 				} else if auth.TenantID == nil || *auth.TenantID != "tenant" ||
-					c.GetString(constants.KeyOrgID) != "tenant" ||
 					c.GetString(constants.KeyTenantID) != "tenant" {
 					t.Errorf("tenant scope: %+v key=%q", auth, c.GetString(constants.KeyTenantID))
 				}

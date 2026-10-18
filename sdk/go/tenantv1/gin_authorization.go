@@ -22,9 +22,6 @@ func PublishAuthorizationContext(c *core.Context, r *http.Request) {
 		return
 	}
 	if auth.TenantID != nil {
-		// KeyOrgID remains the framework's verified tenant scope for idempotence
-		// and impersonation; KeyTenantID exposes the same value by domain name.
-		c.Set(constants.KeyOrgID, *auth.TenantID)
 		c.Set(constants.KeyTenantID, *auth.TenantID)
 	}
 	if auth.ProjectID != nil {
