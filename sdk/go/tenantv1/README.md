@@ -45,6 +45,30 @@ func canWrite(ctx context.Context, endpoint, serviceAPIKey, userID, tenantID, pr
 | `CheckAccess` | 检查 read / write / manage，并返回当前实际权限及授权版本 |
 | `ListAccessEvents` | 使用 `After` 读取最多 200 条持久化授权变更事件 |
 
+## 各端鉴权方式
+
+身份在入口确定后写入 context / Gin 键，内部链路只透传，不再重复问租户服务（除非入口本身就要解析凭据）。
+
+| 调用方 | 请求上带什么 | 谁解析身份 | 业务服务安装的中间件 | 写入的 context / 键 |
+| --- | --- | --- | --- | --- |
+| **前端（已登录）** | 可信网关注入 `x-forge-user-id`、`x-forge-tenant-id`、`x-forge-project-id`（可选 `x-forge-project-id`） | 入口服务用 server-go `auth.TrustedIdentityHeaders` 读头（须先校验网关，不能信任客户端自填） | 网关之后通常不再走本 SDK；若仍要项目权限，再接 `Authorization` / `MiddlewareAuthorization` | `KeyUserID`、`KeyTenantID`、`KeyProjectID`；不写 `KeyImpersonateOrigin*` |
+| **OpenAPI / 用户 API key** | `Authorization: Bearer ftk_...` 或 `forge_session` Cookie（二选一） | 本服务调租户 API：`ResolveIdentity` 或带 URL 范围的 `ResolveScope` + `CheckAccess` | `Identity` / `MiddlewareIdentity`（仅身份）或 `Authorization` / `MiddlewareAuthorization`（身份 + 租户/项目权限） | `Principal` + 可选 `AuthorizationContext`；server-go 侧还有 `KeyUserID` 等 |
+| **内部服务 → 内部服务** | 调用方 Bearer **服务** key + `x-impersonate-target-user-id` 等三个头（由上游 `internalsdk` 发出） | **下游不再**调 `ResolveIdentity`；只校验调用方是登记过的内部服务 | `MiddlewareInternalPropagation`（或自建认证 + `auth.InternalPropagatedIdentity`） | `Key*` 与 `KeyImpersonateOrigin*` 同为透传用户身份，`KeyAuthMode = Internal` |
+
+上游内部调用发送身份：server-go `internalsdk` 打开 `EnableImpersonate`，用 `Wrap(client, inboundCtx)` 发请求，把当前 `KeyUserID`、`KeyTenantID`、`KeyProjectID` 写到 `x-impersonate-target-*`。
+
+## 中间件一览
+
+| 中间件 | 运行环境 | 作用 | 典型路由 |
+| --- | --- | --- | --- |
+| `Identity` | `net/http` | Cookie 或用户 API key → `ResolveIdentity` → `PrincipalFromContext` | 仅需知道“是谁” |
+| `Authorization` | `net/http` | 同上 + URL 租户/项目范围 + 项目 `Action` 权限 | `GET /tenants/{tid}/projects/{pid}/...` |
+| `MiddlewareIdentity` | server-go / Gin | 同 `Identity`，并写 `constants.KeyUserID` | Gin 上仅需身份 |
+| `MiddlewareAuthorization` | server-go / Gin | 同 `Authorization`，并写 `KeyUserID` / `KeyTenantID` / `KeyProjectID` | Gin 上带 `:tid`、`:pid` 的业务 API |
+| `MiddlewareInternalPropagation` | server-go / Gin | 校验内部服务 key，采纳 `x-impersonate-target-*` | `/internal/*` 等仅服务间入口 |
+
+凭据规则（所有身份类中间件共用）：Cookie 与 Bearer **不能同时出现**（`400 AMBIGUOUS_IDENTITY_PROOF`）；用户头、query 里的 tenant/project **不能**当作身份或范围来源。
+
 ## 身份中间件
 
 业务服务不必自己解析 Cookie。`tenantv1.Identity` 从入站请求取出 Cookie 或用户 Bearer API key，调用 `ResolveIdentity`，把结果放进 request context：
@@ -68,7 +92,18 @@ func documents(w http.ResponseWriter, r *http.Request) {
 
 请求同时带 Cookie 和 Bearer 时返回 `400 AMBIGUOUS_IDENTITY_PROOF`，不猜测身份；缺少或无效凭据返回 401，写请求的 Origin / CSRF 不匹配返回 403，租户服务不可达、返回服务端错误或调用服务自身的 key 失效时返回 503，且不执行下游 handler。默认不缓存认证结果，每个请求都重新解析。
 
-server-go 项目直接 import `tenantv1.GinIdentity` 与 `tenantv1.GinAuthorization`，它们返回 `core.HandlerFunc`，通过 `github.com/FlyTOmeLight/server-go/middleware` 的 HTTP 适配层接入，同时写入框架用户键、租户键、项目键和 request context，业务代码两种读法一致。
+**server-go / Gin** 使用 `MiddlewareIdentity`，效果与 `Identity` 相同，并写入 `constants.KeyUserID`：
+
+```go
+client, _ := tenantv1.New(tenantv1.Config{Endpoint: endpoint, ServiceAPIKey: serviceAPIKey})
+routes.GET("/me", tenantv1.MiddlewareIdentity(tenantv1.MiddlewareConfig{Client: client}), func(c *core.Context) {
+    _ = c.GetString(constants.KeyUserID)
+    principal, _ := tenantv1.PrincipalFromContext(c.Request.Context())
+    _ = principal.ID
+})
+```
+
+范围与项目权限见下一节 `Authorization` / `MiddlewareAuthorization`。
 
 ## 范围鉴权中间件
 
@@ -97,11 +132,28 @@ mux.Handle("GET /tenants/{tid}/projects/{pid}/documents/{id}",
 
 Cookie 和 Bearer 使用同一凭据提取规则；Cookie 转发原始 method、Origin 和 CSRF。用户 ID 只取已验证 Principal，`X-User-ID`、`X-Tenant-ID`、`X-Project-ID` 等用户头不作为范围或身份来源。未找到作用域保留 `404 SCOPE_NOT_FOUND`，无权限返回 403；服务调用失败、服务 key 被拒绝和响应身份／范围不一致返回脱敏的 503。任何失败均不进入业务 handler。
 
-`GinAuthorization(tenantv1.AuthorizationConfig)` 默认读取路由 `:tid`、`:pid` 参数，使用 `Params.Get` 保留“未提供”的区别。默认不读取同名 query 参数；标准适配器如需 query 参数，回调必须显式处理缺失、空值和重复值。可提供自己的 Scope 回调替换默认提取方式。成功后会写入 `constants.KeyUserID`，并在范围校验通过时写入 `constants.KeyTenantID` 与 `constants.KeyProjectID`；`AuthorizationFromContext` 返回 `Principal`、可选的 `TenantID` / `ProjectID` 和本次通过的 `Action`。
+`MiddlewareAuthorization(tenantv1.AuthorizationConfig)` 通过 `middleware.HTTPAuthorization` 接入标准 `Authorization` 逻辑：默认从 Gin 路由读取 `:tid`、`:pid`（`Params.Get`，区分“未提供”与空字符串）。也可自定义 `Scope` 回调。成功后写入 `constants.KeyUserID`，范围校验通过时写入 `KeyTenantID`、`KeyProjectID`；`AuthorizationFromContext` 仍可从 `c.Request.Context()` 读取 `Principal` 与 `Action`。
+
+### 内部服务之间的身份透传
+
+内部服务互相调用不回租户服务解析身份。上游通过 server-go `internalsdk`（`EnableImpersonate`）把 context 中已验证的 `KeyUserID`、`KeyTenantID`、`KeyProjectID` 写到下游请求的 `x-impersonate-target-*` 头；下游安装 `MiddlewareInternalPropagation` 采纳这个身份：
+
+```go
+propagation, err := tenantv1.MiddlewareInternalPropagation(tenantv1.InternalPropagationConfig{
+    ServiceTokens: map[string]string{
+        cfg.InternalCallerKey: "agentic-kit-api",
+    },
+})
+internal := routes.Group("/internal", propagation)
+```
+
+中间件先按 `ServiceTokens` 校验调用方的 Bearer 服务 key（常数时间比较），再把透传的租户、用户、项目同时写入 `constants.Key*` 和 `constants.KeyImpersonateOrigin*`，并把 `KeyAuthMode` 设为 `Internal`。origin 键就是“身份已由上游验证、无需再问租户服务”的标记；不带透传头时保留服务账号自身的身份。身份头只能来自通过服务 key 校验的调用方，服务 key 缺失或未知返回 401，透传头不完整或调用方被 `Authorize` 拒绝返回 403。
+
+需要自定义调用方校验（例如回租户服务动态验证）时，不使用本中间件，直接安装自己的调用方认证后接 server-go 的 `auth.InternalPropagatedIdentity`。上游侧的透传发送见 server-go `internalsdk`；前端登录态和 OpenAPI 凭据仍分别走 `Identity` / `MiddlewareIdentity` 与 `Authorization` / `MiddlewareAuthorization`。
 
 ```go
 routes.GET("/tenants/:tid/projects/:pid/documents/:id",
-    tenantv1.GinAuthorization(tenantv1.AuthorizationConfig{
+    tenantv1.MiddlewareAuthorization(tenantv1.AuthorizationConfig{
         Client: client,
         Action: tenantv1.AccessRead,
     }), documentController)
@@ -142,4 +194,4 @@ HTTP 失败返回 `*tenantv1.Error`，通过 `errors.As` 读取 `Status`、`Code
 
 身份须来自已验证会话或任务责任链。`CheckAccess` 的 `Allowed=false` 是一次成功查询得到的拒绝结果；接口不可达也应拒绝敏感操作。消费撤权事件时，调用方在成功处理后持久化最后一条事件 ID，SDK 不自动翻页、确认事件或停止执行器。
 
-SDK 随本仓库根模块交付，没有独立 go.mod。本次 `ServiceAPIKey`、`ResolveIdentity`、身份与范围鉴权中间件改动尚未发布，旧版 v0.9.1 不包含这些接口。
+SDK 随本仓库根模块交付，没有独立 go.mod。依赖 `github.com/FlyTOmeLight/server-go` v0.13.0 及以上（`MiddlewareInternalPropagation` 需要其中的 `auth.InternalPropagatedIdentity`）。

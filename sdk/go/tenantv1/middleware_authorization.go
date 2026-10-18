@@ -29,9 +29,9 @@ func PublishAuthorizationContext(c *core.Context, r *http.Request) {
 	}
 }
 
-// GinAuthorization validates identity and URL scope before running later handlers.
+// MiddlewareAuthorization validates identity and URL scope before running later handlers.
 // Without a Scope callback it reads the router's tid and pid path parameters.
-func GinAuthorization(config AuthorizationConfig) core.HandlerFunc {
+func MiddlewareAuthorization(config AuthorizationConfig) core.HandlerFunc {
 	return func(c *core.Context) {
 		requestConfig := config
 		if requestConfig.Scope == nil {
@@ -53,9 +53,9 @@ func GinAuthorization(config AuthorizationConfig) core.HandlerFunc {
 	}
 }
 
-// GinIdentity resolves the caller through forge-tenant and publishes the principal
+// MiddlewareIdentity resolves the caller through forge-tenant and publishes the principal
 // on both Gin keys and the request context.
-func GinIdentity(config MiddlewareConfig) core.HandlerFunc {
+func MiddlewareIdentity(config MiddlewareConfig) core.HandlerFunc {
 	cookie := config.SessionCookie
 	if cookie == "" {
 		cookie = DefaultSessionCookie

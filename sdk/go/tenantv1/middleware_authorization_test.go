@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestGinAuthorizationPublishesScope(t *testing.T) {
+func TestMiddlewareAuthorizationPublishesScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, route, path, action string
@@ -94,7 +94,7 @@ func TestGinAuthorizationPublishesScope(t *testing.T) {
 				}
 			}
 			handled := false
-			engine.POST(tc.route, extract, GinAuthorization(config), func(c *core.Context) {
+			engine.POST(tc.route, extract, MiddlewareAuthorization(config), func(c *core.Context) {
 				handled = true
 				auth, ok := AuthorizationFromContext(c.Request.Context())
 				principal, identityOK := PrincipalFromContext(c.Request.Context())
@@ -166,7 +166,7 @@ func TestGinAuthorizationPublishesScope(t *testing.T) {
 	}
 }
 
-func TestGinAuthorizationAbortsRejectedRequests(t *testing.T) {
+func TestMiddlewareAuthorizationAbortsRejectedRequests(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, route, path, action, response string
@@ -212,7 +212,7 @@ func TestGinAuthorizationAbortsRejectedRequests(t *testing.T) {
 			engine := gin.New()
 			engine.GET(
 				tc.route,
-				GinAuthorization(config),
+				MiddlewareAuthorization(config),
 				func(c *core.Context) { t.Error("rejected request reached handler") },
 			)
 			request := httptest.NewRequest(http.MethodGet, "http://service.test"+tc.path, nil)
@@ -226,7 +226,7 @@ func TestGinAuthorizationAbortsRejectedRequests(t *testing.T) {
 	}
 }
 
-func TestGinIdentityPublishesSameUserOnGinAndContext(t *testing.T) {
+func TestMiddlewareIdentityPublishesSameUserOnGinAndContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in ResolveIdentityRequest
@@ -244,7 +244,7 @@ func TestGinIdentityPublishesSameUserOnGinAndContext(t *testing.T) {
 
 	handled := 0
 	engine := gin.New()
-	engine.GET("/resource", GinIdentity(MiddlewareConfig{Client: client}), func(c *core.Context) {
+	engine.GET("/resource", MiddlewareIdentity(MiddlewareConfig{Client: client}), func(c *core.Context) {
 		handled++
 		ginUser := c.GetString(constants.KeyUserID)
 		principal, ok := PrincipalFromContext(c.Request.Context())

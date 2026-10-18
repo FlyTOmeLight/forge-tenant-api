@@ -3,7 +3,7 @@ module github.com/FlyTOmeLight/forge-tenant-api
 go 1.27.1
 
 require (
-	github.com/FlyTOmeLight/server-go v0.9.0
+	github.com/FlyTOmeLight/server-go v0.13.0
 	github.com/casdoor/casdoor-go-sdk v1.56.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/gin-gonic/gin v1.12.0
@@ -109,5 +109,3 @@ require (
 	gorm.io/plugin/soft_delete v1.2.1 // indirect
 	resty.dev/v3 v3.0.0-rc.4 // indirect
 )
-
-replace github.com/FlyTOmeLight/server-go => /Users/light/Code/server-go
