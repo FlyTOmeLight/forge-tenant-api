@@ -63,7 +63,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ## 服务调用 SDK
 
-可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用身份解析、租户工作区、作用域解析、项目解析、项目权限和撤权事件接口；SDK 还提供把入站 Cookie 或用户 API key 解析成用户身份的 `net/http` 中间件与 server-go 适配。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.9.1 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.9.1` 安装。
+可信 Go 服务使用 [`sdk/go/tenantv1`](sdk/go/tenantv1/README.md) 调用身份解析、租户工作区、作用域解析、项目解析、项目权限和撤权事件接口；SDK 还提供把入站 Cookie 或用户 API key 解析成用户身份的 `net/http` 中间件与 server-go 适配。SDK 复用 server-go 的连接、超时和错误解码，提供有类型的请求 / 响应；服务端复用同一契约。调用方在装配阶段创建 Client，运行期间复用，退出时关闭。SDK 随根模块 v0.10.0 发布，使用 `go get github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1@v0.10.0` 安装。
 
 ## Kubernetes / Helm
 
@@ -73,7 +73,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ```sh
 python3 scripts/prepare-lab.py --lab-config /path/to/infra.json --kubectl /path/to/kubectl
-FORGE_IMAGE_TAG=0.9.1 ./scripts/deploy-lab.sh
+FORGE_IMAGE_TAG=0.10.0 ./scripts/deploy-lab.sh
 ```
 
 本机部署统一使用 namespace `forge-tenant-split`。后端 Helm release 为 `forge-tenant`，前端独立 release 为 `forge-tenant-web`。浏览器入口通过前端 Service 提供：
