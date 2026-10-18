@@ -68,7 +68,7 @@ func documents(w http.ResponseWriter, r *http.Request) {
 
 请求同时带 Cookie 和 Bearer 时返回 `400 AMBIGUOUS_IDENTITY_PROOF`，不猜测身份；缺少或无效凭据返回 401，写请求的 Origin / CSRF 不匹配返回 403，租户服务不可达、返回服务端错误或调用服务自身的 key 失效时返回 503，且不执行下游 handler。默认不缓存认证结果，每个请求都重新解析。
 
-server-go 项目使用子包 `github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1/servergo`，其 `Identity(tenantv1.MiddlewareConfig)` 返回 `core.HandlerFunc`，同时写入框架用户键和 request context，业务代码两种读法一致。
+server-go 项目直接 import `tenantv1.GinIdentity` 与 `tenantv1.GinAuthorization`，它们返回 `core.HandlerFunc`，通过 `github.com/FlyTOmeLight/server-go/middleware` 的 HTTP 适配层接入，同时写入框架用户键、租户键、项目键和 request context，业务代码两种读法一致。
 
 ## 范围鉴权中间件
 
@@ -97,11 +97,11 @@ mux.Handle("GET /tenants/{tid}/projects/{pid}/documents/{id}",
 
 Cookie 和 Bearer 使用同一凭据提取规则；Cookie 转发原始 method、Origin 和 CSRF。用户 ID 只取已验证 Principal，`X-User-ID`、`X-Tenant-ID`、`X-Project-ID` 等用户头不作为范围或身份来源。未找到作用域保留 `404 SCOPE_NOT_FOUND`，无权限返回 403；服务调用失败、服务 key 被拒绝和响应身份／范围不一致返回脱敏的 503。任何失败均不进入业务 handler。
 
-server-go 子包的 `Authorization(tenantv1.AuthorizationConfig)` 默认读取路由 `:tid`、`:pid` 参数，使用 `Params.Get` 保留“未提供”的区别。默认不读取同名 query 参数；标准适配器如需 query 参数，回调必须显式处理缺失、空值和重复值。可提供自己的 Scope 回调替换默认提取方式。两种适配器均通过 `AuthorizationFromContext` 返回 `Principal`、可选的 `TenantID` / `ProjectID` 和本次通过的 `Action`；`PrincipalFromContext` 继续可用，server-go 的框架用户键也保持一致。
+`GinAuthorization(tenantv1.AuthorizationConfig)` 默认读取路由 `:tid`、`:pid` 参数，使用 `Params.Get` 保留“未提供”的区别。默认不读取同名 query 参数；标准适配器如需 query 参数，回调必须显式处理缺失、空值和重复值。可提供自己的 Scope 回调替换默认提取方式。成功后会写入 `constants.KeyUserID`，并在范围校验通过时写入 `constants.KeyTenantID` 与 `constants.KeyProjectID`；`AuthorizationFromContext` 返回 `Principal`、可选的 `TenantID` / `ProjectID` 和本次通过的 `Action`。
 
 ```go
 routes.GET("/tenants/:tid/projects/:pid/documents/:id",
-    servergo.Authorization(tenantv1.AuthorizationConfig{
+    tenantv1.GinAuthorization(tenantv1.AuthorizationConfig{
         Client: client,
         Action: tenantv1.AccessRead,
     }), documentController)

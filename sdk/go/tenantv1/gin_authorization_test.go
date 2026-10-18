@@ -1,4 +1,4 @@
-package servergo
+package tenantv1
 
 import (
 	"encoding/json"
@@ -11,11 +11,9 @@ import (
 	"github.com/FlyTOmeLight/server-go/constants"
 	core "github.com/FlyTOmeLight/server-go/pkg"
 	"github.com/gin-gonic/gin"
-
-	"github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1"
 )
 
-func TestAuthorizationPublishesScope(t *testing.T) {
+func TestGinAuthorizationPublishesScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, route, path, action string
@@ -32,10 +30,10 @@ func TestAuthorizationPublishesScope(t *testing.T) {
 				switch r.URL.Path {
 				case "/internal/v1/identity/resolve":
 					identityCalls.Add(1)
-					_ = json.NewEncoder(w).Encode(tenantv1.Principal{ID: "user"})
+					_ = json.NewEncoder(w).Encode(Principal{ID: "user"})
 				case "/internal/v1/scope/resolve":
 					scopeCalls.Add(1)
-					var in tenantv1.ResolveScopeRequest
+					var in ResolveScopeRequest
 					if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 						t.Error(err)
 					}
@@ -43,25 +41,25 @@ func TestAuthorizationPublishesScope(t *testing.T) {
 						t.Errorf("scope = %+v", in)
 					}
 					if tc.cookie {
-						if in.Type != tenantv1.IdentityProofSession ||
+						if in.Type != IdentityProofSession ||
 							in.Session != "session" ||
 							in.Origin != "https://service.test" ||
 							in.CSRF != "csrf" {
 							t.Errorf("cookie proof = %+v", in)
 						}
-					} else if in.Type != tenantv1.IdentityProofAPIKey || in.APIKey != "user-key" {
+					} else if in.Type != IdentityProofAPIKey || in.APIKey != "user-key" {
 						t.Errorf("API key proof = %+v", in)
 					}
-					_ = json.NewEncoder(w).Encode(tenantv1.ResolveScopeResponse{
+					_ = json.NewEncoder(w).Encode(ResolveScopeResponse{
 						UserID:         "user",
-						Principal:      &tenantv1.Principal{ID: "user"},
+						Principal:      &Principal{ID: "user"},
 						TenantID:       in.TenantID,
 						ProjectID:      in.ProjectID,
 						OwnershipState: "active",
 					})
 				case "/internal/v1/access/check":
 					accessCalls.Add(1)
-					var in tenantv1.CheckAccessRequest
+					var in CheckAccessRequest
 					if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 						t.Error(err)
 					}
@@ -71,16 +69,16 @@ func TestAuthorizationPublishesScope(t *testing.T) {
 						t.Errorf("access = %+v", in)
 					}
 					_ = json.NewEncoder(w).
-						Encode(tenantv1.CheckAccessResponse{Allowed: true, TenantID: "tenant", ProjectID: "project"})
+						Encode(CheckAccessResponse{Allowed: true, TenantID: "tenant", ProjectID: "project"})
 				default:
 					t.Errorf("unexpected path: %s", r.URL.Path)
 					w.WriteHeader(404)
 				}
 			}))
 			defer tenant.Close()
-			config := tenantv1.AuthorizationConfig{
-				Client: newTenantClient(t, tenant.URL),
-				Action: tenantv1.AccessAction(tc.action),
+			config := AuthorizationConfig{
+				Client: newGinTestClient(t, tenant.URL),
+				Action: AccessAction(tc.action),
 			}
 			engine := gin.New()
 			var extract core.HandlerFunc = func(c *core.Context) { c.Next() }
@@ -90,16 +88,16 @@ func TestAuthorizationPublishesScope(t *testing.T) {
 					c.Request.SetPathValue("repo", c.Param("repo"))
 					c.Next()
 				}
-				config.Scope = func(r *http.Request) (tenantv1.Scope, error) {
+				config.Scope = func(r *http.Request) (Scope, error) {
 					tid, pid := r.PathValue("org"), r.PathValue("repo")
-					return tenantv1.Scope{TenantID: &tid, ProjectID: &pid}, nil
+					return Scope{TenantID: &tid, ProjectID: &pid}, nil
 				}
 			}
 			handled := false
-			engine.POST(tc.route, extract, Authorization(config), func(c *core.Context) {
+			engine.POST(tc.route, extract, GinAuthorization(config), func(c *core.Context) {
 				handled = true
-				auth, ok := tenantv1.AuthorizationFromContext(c.Request.Context())
-				principal, identityOK := tenantv1.PrincipalFromContext(c.Request.Context())
+				auth, ok := AuthorizationFromContext(c.Request.Context())
+				principal, identityOK := PrincipalFromContext(c.Request.Context())
 				if !ok || !identityOK || auth.Principal.ID != "user" || principal.ID != "user" ||
 					c.GetString(constants.KeyUserID) != "user" {
 					t.Fatalf("missing verified identity: %+v", auth)
@@ -108,14 +106,29 @@ func TestAuthorizationPublishesScope(t *testing.T) {
 					t.Errorf("action=%s", auth.Action)
 				}
 				if tc.route == "/me" {
-					if auth.TenantID != nil || auth.ProjectID != nil {
-						t.Errorf("unexpected scope: %+v", auth)
+					if auth.TenantID != nil || auth.ProjectID != nil ||
+						c.GetString(constants.KeyTenantID) != "" ||
+						c.GetString(constants.KeyProjectID) != "" {
+						t.Errorf(
+							"unexpected scope: %+v keys tenant=%q project=%q",
+							auth,
+							c.GetString(constants.KeyTenantID),
+							c.GetString(constants.KeyProjectID),
+						)
 					}
-				} else if auth.TenantID == nil || *auth.TenantID != "tenant" {
-					t.Errorf("tenant scope: %+v", auth)
+				} else if auth.TenantID == nil || *auth.TenantID != "tenant" ||
+					c.GetString(constants.KeyTenantID) != "tenant" {
+					t.Errorf("tenant scope: %+v key=%q", auth, c.GetString(constants.KeyTenantID))
 				}
-				if tc.action != "" && (auth.ProjectID == nil || *auth.ProjectID != "project") {
-					t.Errorf("project scope: %+v", auth)
+				if tc.action != "" {
+					if auth.ProjectID == nil || *auth.ProjectID != "project" ||
+						c.GetString(constants.KeyProjectID) != "project" {
+						t.Errorf(
+							"project scope: %+v key=%q",
+							auth,
+							c.GetString(constants.KeyProjectID),
+						)
+					}
 				}
 				c.Status(http.StatusNoContent)
 			})
@@ -128,7 +141,7 @@ func TestAuthorizationPublishesScope(t *testing.T) {
 			request.Header.Set("X-Tenant-ID", "forged")
 			request.Header.Set("X-Project-ID", "forged")
 			if tc.cookie {
-				request.AddCookie(&http.Cookie{Name: tenantv1.DefaultSessionCookie, Value: "session"})
+				request.AddCookie(&http.Cookie{Name: DefaultSessionCookie, Value: "session"})
 				request.Header.Set("Origin", "https://service.test")
 				request.Header.Set("X-CSRF-Token", "csrf")
 			} else {
@@ -153,7 +166,7 @@ func TestAuthorizationPublishesScope(t *testing.T) {
 	}
 }
 
-func TestAuthorizationAbortsRejectedRequests(t *testing.T) {
+func TestGinAuthorizationAbortsRejectedRequests(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, route, path, action, response string
@@ -188,10 +201,10 @@ func TestAuthorizationAbortsRejectedRequests(t *testing.T) {
 				_, _ = w.Write([]byte(tc.response))
 			}))
 			defer tenant.Close()
-			config := tenantv1.AuthorizationConfig{
-				Client:        newTenantClient(t, tenant.URL),
+			config := AuthorizationConfig{
+				Client:        newGinTestClient(t, tenant.URL),
 				RequireTenant: tc.requireTenant,
-				Action:        tenantv1.AccessAction(tc.action),
+				Action:        AccessAction(tc.action),
 			}
 			if tc.nilClient {
 				config.Client = nil
@@ -199,7 +212,7 @@ func TestAuthorizationAbortsRejectedRequests(t *testing.T) {
 			engine := gin.New()
 			engine.GET(
 				tc.route,
-				Authorization(config),
+				GinAuthorization(config),
 				func(c *core.Context) { t.Error("rejected request reached handler") },
 			)
 			request := httptest.NewRequest(http.MethodGet, "http://service.test"+tc.path, nil)
@@ -211,4 +224,50 @@ func TestAuthorizationAbortsRejectedRequests(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGinIdentityPublishesSameUserOnGinAndContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in ResolveIdentityRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Error(err)
+		}
+		if in.Type != IdentityProofAPIKey || in.APIKey != "user-api-key" {
+			t.Errorf("unexpected identity proof: %+v", in)
+		}
+		_ = json.NewEncoder(w).
+			Encode(Principal{ID: "user-1", Name: "User", Email: "user@example.test"})
+	}))
+	defer tenant.Close()
+	client := newGinTestClient(t, tenant.URL)
+
+	handled := 0
+	engine := gin.New()
+	engine.GET("/resource", GinIdentity(MiddlewareConfig{Client: client}), func(c *core.Context) {
+		handled++
+		ginUser := c.GetString(constants.KeyUserID)
+		principal, ok := PrincipalFromContext(c.Request.Context())
+		if !ok || principal.ID != "user-1" || ginUser != principal.ID {
+			t.Errorf("identity mismatch: gin=%q context=%+v present=%v", ginUser, principal, ok)
+		}
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodGet, "http://service.test/resource", nil)
+	request.Header.Set("Authorization", "Bearer user-api-key")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || handled != 1 {
+		t.Fatalf("status %d, handler runs %d", response.Code, handled)
+	}
+}
+
+func newGinTestClient(t *testing.T, endpoint string) *Client {
+	t.Helper()
+	client, err := New(Config{Endpoint: endpoint, ServiceAPIKey: strings.Repeat("s", 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return client
 }

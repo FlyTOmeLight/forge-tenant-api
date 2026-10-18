@@ -13,7 +13,7 @@
 - 新增 `credentials` 表与 `internal/app/credential`：账号级 Bearer 凭据（`Authorization: Bearer ftk_<43 位 base64url>`），数据库只存 SHA-256 摘要并建唯一索引，校验同时检查 `expires_at`、`revoked_at` 与用户状态。凭据不绑定租户或项目，权限仍每次实时检查。
 - 用户凭据只允许 Cookie 会话管理（`POST/GET/DELETE /api/v1/credentials`），保留 Origin / CSRF，创建默认 90 天、最长 365 天，列表永不返回 token；API key 不能管理凭据，也不经过幂等响应表。服务凭据由 `forge service-credential issue|list|revoke` 维护，每个服务一把，替代全局 `SERVICE_TOKEN`。
 - 公开业务路由改由统一身份中间件接受 `forge_session` Cookie 或用户 Bearer API key，二者同时出现返回 400 且不回退；Cookie 写请求继续校验 Origin / CSRF，API key 请求不做浏览器 CSRF 检查。`/internal/v1/session/check` 由 `/internal/v1/identity/resolve` 取代，内部接口改用服务 API key 校验，用户凭据调用内部接口返回 401。
-- SDK 的 `Config.ServiceToken` 改为 `ServiceAPIKey`，删除 `CheckSession`，新增 `ResolveIdentity`、`net/http` 身份中间件、`PrincipalFromContext` 和 server-go 适配子包 `sdk/go/tenantv1/servergo`。
+- SDK 的 `Config.ServiceToken` 改为 `ServiceAPIKey`，删除 `CheckSession`，新增 `ResolveIdentity`、`net/http` 身份中间件、`PrincipalFromContext`，以及通过 `server-go/middleware.HTTPAuthorization` 接入的 `GinIdentity` / `GinAuthorization`。
 
 验证：
 

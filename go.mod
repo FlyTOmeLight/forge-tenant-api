@@ -109,3 +109,5 @@ require (
 	gorm.io/plugin/soft_delete v1.2.1 // indirect
 	resty.dev/v3 v3.0.0-rc.4 // indirect
 )
+
+replace github.com/FlyTOmeLight/server-go => /Users/light/Code/server-go
