@@ -54,24 +54,26 @@ func TestIdentityPublishesSameUserOnGinAndContext(t *testing.T) {
 func TestIdentityRejectionSkipsHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
-		name, authorization, tenantBody, wantCode string
-		tenantStatus, wantStatus, wantTenantCalls int
+		name, authorization, tenantBody, wantCode, wantMessage string
+		tenantStatus, wantStatus, wantTenantCalls              int
 	}{
 		{name: "missing credentials", wantStatus: http.StatusUnauthorized, wantCode: "AUTH_REQUIRED"},
 		{
 			name: "user API key rejected", authorization: "Bearer bad", tenantStatus: http.StatusUnauthorized,
 			tenantBody: `{"error":{"code":"AUTH_REQUIRED","message":"API key invalid"}}`,
-			wantStatus: http.StatusUnauthorized, wantCode: "AUTH_REQUIRED", wantTenantCalls: 1,
+			wantStatus: http.StatusUnauthorized, wantCode: "AUTH_REQUIRED", wantMessage: "API key invalid", wantTenantCalls: 1,
 		},
 		{
 			name: "service key rejected", authorization: "Bearer user-api-key", tenantStatus: http.StatusUnauthorized,
 			tenantBody: `{"error":{"code":"SERVICE_AUTH_REQUIRED","message":"service identity invalid"}}`,
-			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE", wantTenantCalls: 1,
+			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE",
+			wantMessage: "identity service is temporarily unavailable", wantTenantCalls: 1,
 		},
 		{
 			name: "tenant internal error", authorization: "Bearer user-api-key", tenantStatus: http.StatusInternalServerError,
 			tenantBody: `{"error":{"code":"INTERNAL","message":"boom"}}`,
-			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE", wantTenantCalls: 1,
+			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE",
+			wantMessage: "identity service is temporarily unavailable", wantTenantCalls: 1,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -107,7 +109,8 @@ func TestIdentityRejectionSkipsHandler(t *testing.T) {
 			}
 			var body struct {
 				Error struct {
-					Code string `json:"code"`
+					Code    string `json:"code"`
+					Message string `json:"message"`
 				} `json:"error"`
 			}
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
@@ -115,6 +118,9 @@ func TestIdentityRejectionSkipsHandler(t *testing.T) {
 			}
 			if body.Error.Code != tc.wantCode {
 				t.Errorf("error code %q, want %q", body.Error.Code, tc.wantCode)
+			}
+			if tc.wantMessage != "" && body.Error.Message != tc.wantMessage {
+				t.Errorf("error message %q, want %q", body.Error.Message, tc.wantMessage)
 			}
 			if got := int(calls.Load()); got != tc.wantTenantCalls {
 				t.Errorf("tenant calls %d, want %d", got, tc.wantTenantCalls)

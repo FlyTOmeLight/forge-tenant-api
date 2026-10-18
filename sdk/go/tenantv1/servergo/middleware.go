@@ -31,7 +31,12 @@ func Identity(config tenantv1.MiddlewareConfig) core.HandlerFunc {
 		status, code := tenantv1.IdentityFailure(err)
 		c.AbortWithStatusJSON(
 			status,
-			map[string]any{"error": map[string]any{"code": code, "message": err.Error()}},
+			map[string]any{
+				"error": map[string]any{
+					"code":    code,
+					"message": tenantv1.IdentityErrorMessage(err),
+				},
+			},
 		)
 	}
 }

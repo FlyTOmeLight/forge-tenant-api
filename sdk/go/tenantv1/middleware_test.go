@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -71,14 +72,15 @@ func TestIdentityMiddlewarePrincipal(t *testing.T) {
 
 func TestIdentityMiddlewareFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name, session, authorization, tenantBody, wantCode string
-		tenantStatus, wantStatus                           int
-		closeTenant, noTenantCall                          bool
+		name, session, authorization, tenantBody, wantCode, wantMessage string
+		tenantStatus, wantStatus                                        int
+		closeTenant, noTenantCall                                       bool
 	}{
-		{name: "missing credentials", wantStatus: http.StatusUnauthorized, wantCode: "AUTH_REQUIRED", noTenantCall: true},
+		{name: "missing credentials", wantStatus: http.StatusUnauthorized, wantCode: "AUTH_REQUIRED", wantMessage: "missing session cookie or bearer API key", noTenantCall: true},
 		{
 			name: "ambiguous credentials", session: "cookie", authorization: "Bearer user-api-key",
-			wantStatus: http.StatusBadRequest, wantCode: "AMBIGUOUS_IDENTITY_PROOF", noTenantCall: true,
+			wantStatus: http.StatusBadRequest, wantCode: "AMBIGUOUS_IDENTITY_PROOF",
+			wantMessage: "send either the session cookie or the bearer API key, not both", noTenantCall: true,
 		},
 		{
 			name: "bare bearer with cookie", session: "cookie", authorization: "Bearer",
@@ -95,37 +97,42 @@ func TestIdentityMiddlewareFailures(t *testing.T) {
 		{
 			name: "tenant session rejection", session: "cookie", tenantStatus: http.StatusForbidden,
 			tenantBody: `{"error":{"code":"CSRF_REJECTED","message":"origin rejected"}}`,
-			wantStatus: http.StatusForbidden, wantCode: "CSRF_REJECTED",
+			wantStatus: http.StatusForbidden, wantCode: "CSRF_REJECTED", wantMessage: "origin rejected",
 		},
 		{
 			name: "user API key rejection", authorization: "Bearer user-api-key", tenantStatus: http.StatusUnauthorized,
 			tenantBody: `{"error":{"code":"AUTH_REQUIRED","message":"API key invalid"}}`,
-			wantStatus: http.StatusUnauthorized, wantCode: "AUTH_REQUIRED",
+			wantStatus: http.StatusUnauthorized, wantCode: "AUTH_REQUIRED", wantMessage: "API key invalid",
 		},
 		{
 			name: "service key rejection is not a user failure", authorization: "Bearer user-api-key",
 			tenantStatus: http.StatusUnauthorized,
 			tenantBody:   `{"error":{"code":"SERVICE_AUTH_REQUIRED","message":"service identity invalid"}}`,
 			wantStatus:   http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE",
+			wantMessage: "identity service is temporarily unavailable",
 		},
 		{
 			name: "tenant internal error", session: "cookie", tenantStatus: http.StatusInternalServerError,
 			tenantBody: `{"error":{"code":"INTERNAL","message":"boom"}}`,
 			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE",
+			wantMessage: "identity service is temporarily unavailable",
 		},
 		{
 			name: "tenant proxy HTML", authorization: "Bearer user-api-key", tenantStatus: http.StatusBadGateway,
 			tenantBody: "<html>unavailable</html>",
 			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE",
+			wantMessage: "identity service is temporarily unavailable",
 		},
 		{
 			name: "tenant route missing", session: "cookie", tenantStatus: http.StatusNotFound,
 			tenantBody: `{}`,
 			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE",
+			wantMessage: "identity service is temporarily unavailable",
 		},
 		{
 			name: "tenant unavailable", authorization: "Bearer user-api-key", closeTenant: true,
 			wantStatus: http.StatusServiceUnavailable, wantCode: "IDENTITY_UNAVAILABLE",
+			wantMessage: "identity service is temporarily unavailable",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,7 +163,7 @@ func TestIdentityMiddlewareFailures(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
-			assertIdentityError(t, response, tc.wantStatus, tc.wantCode)
+			assertIdentityError(t, response, tc.wantStatus, tc.wantCode, tc.wantMessage)
 			if nextCalled {
 				t.Fatal("next handler was called")
 			}
@@ -167,14 +174,20 @@ func TestIdentityMiddlewareFailures(t *testing.T) {
 	}
 }
 
-func assertIdentityError(t *testing.T, response *httptest.ResponseRecorder, wantStatus int, wantCode string) {
+func assertIdentityError(
+	t *testing.T,
+	response *httptest.ResponseRecorder,
+	wantStatus int,
+	wantCode, wantMessage string,
+) {
 	t.Helper()
 	if response.Code != wantStatus {
 		t.Errorf("unexpected status: %d", response.Code)
 	}
 	var body struct {
 		Error struct {
-			Code string `json:"code"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
@@ -182,5 +195,13 @@ func assertIdentityError(t *testing.T, response *httptest.ResponseRecorder, want
 	}
 	if body.Error.Code != wantCode {
 		t.Errorf("unexpected error code: %s", body.Error.Code)
+	}
+	if wantMessage != "" && body.Error.Message != wantMessage {
+		t.Errorf("unexpected error message: %q", body.Error.Message)
+	}
+	if wantCode == "IDENTITY_UNAVAILABLE" {
+		if strings.Contains(body.Error.Message, "tenant API:") || strings.Contains(body.Error.Message, "boom") {
+			t.Errorf("leaked internal error in message: %q", body.Error.Message)
+		}
 	}
 }

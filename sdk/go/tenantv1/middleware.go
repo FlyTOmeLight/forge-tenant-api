@@ -10,6 +10,8 @@ import (
 // DefaultSessionCookie is the browser session cookie forge-tenant issues.
 const DefaultSessionCookie = "forge_session"
 
+const identityUnavailableMessage = "identity service is temporarily unavailable"
+
 // MiddlewareConfig configures the identity middleware.
 type MiddlewareConfig struct {
 	Client *Client
@@ -99,13 +101,27 @@ func userCredentialFailure(detail *Error) bool {
 	return detail.Code != "" && detail.Code != "HTTPError" && detail.Code != "SERVICE_AUTH_REQUIRED"
 }
 
+// IdentityErrorMessage is the client-safe message paired with IdentityFailure.
+// Remapped infrastructure failures never echo the underlying error string.
+func IdentityErrorMessage(err error) string {
+	if _, code := IdentityFailure(err); code == "IDENTITY_UNAVAILABLE" {
+		return identityUnavailableMessage
+	}
+	var detail *Error
+	if errors.As(err, &detail) && detail.Message != "" {
+		return detail.Message
+	}
+	return err.Error()
+}
+
 // WriteIdentityError writes the Forge error envelope for a failed resolution.
 func WriteIdentityError(w http.ResponseWriter, err error) {
 	status, code := IdentityFailure(err)
+	message := IdentityErrorMessage(err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(
-		map[string]any{"error": map[string]any{"code": code, "message": err.Error()}},
+		map[string]any{"error": map[string]any{"code": code, "message": message}},
 	)
 }
 
