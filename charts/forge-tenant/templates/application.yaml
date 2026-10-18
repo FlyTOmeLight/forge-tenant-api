@@ -12,6 +12,9 @@ spec:
       labels: {app: {{ $.Release.Name }}-{{ $mode }}}
       annotations:
         forge/config-revision: {{ $.Values.configRevision | default "initial" | quote }}
+        {{- if and (eq $mode "api") $.Values.internalTLS.enabled }}
+        checksum/internal-tls: {{ include (print $.Template.BasePath "/internal-tls.yaml") $ | sha256sum }}
+        {{- end }}
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 110
@@ -41,7 +44,11 @@ spec:
           image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           args: [{{ $mode }}]
-          envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
+          envFrom:
+            - secretRef: {name: {{ $.Values.existingSecret }}}
+            {{- if and (eq $mode "worker") $.Values.worker.existingSecret }}
+            - secretRef: {name: {{ $.Values.worker.existingSecret }}}
+            {{- end }}
           env: [{name: GITLAB_TOKEN_FILE, value: /var/run/forge-gitlab/token}]
           securityContext:
             allowPrivilegeEscalation: false
@@ -60,13 +67,45 @@ spec:
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 256Mi}
+        {{- if and (eq $mode "api") $.Values.internalTLS.enabled }}
+        - name: integration-tls
+          image: {{ $.Values.internalTLS.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [nginx, -c, /config/nginx.conf, -g, "daemon off;"]
+          ports: [{name: internal-tls, containerPort: 8443}]
+          readinessProbe:
+            tcpSocket: {port: internal-tls}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: integration-tls, mountPath: /tls, readOnly: true}
+            - {name: integration-nginx, mountPath: /config, readOnly: true}
+            - {name: integration-tmp, mountPath: /tmp}
+        {{- end }}
       volumes:
         - name: gitlab-token
           secret:
             secretName: {{ $.Values.existingSecret }}
             items: [{key: GITLAB_TOKEN, path: token}]
         - name: ca
-          secret: {secretName: {{ $.Values.caSecret }}}
+          secret: {secretName: {{ if eq $mode "worker" }}{{ $.Values.worker.caSecret | default $.Values.caSecret }}{{ else }}{{ $.Values.caSecret }}{{ end }}}
+        {{- if and (eq $mode "api") $.Values.internalTLS.enabled }}
+        - name: integration-tls
+          secret:
+            secretName: {{ required "internalTLS.existingSecret is required when internalTLS is enabled" $.Values.internalTLS.existingSecret }}
+            items:
+              - {key: {{ $.Values.internalTLS.certificateKey }}, path: tls.crt}
+              - {key: {{ $.Values.internalTLS.privateKeyKey }}, path: tls.key}
+        - name: integration-nginx
+          configMap: {name: {{ $.Release.Name }}-internal-tls}
+        - name: integration-tmp
+          emptyDir: {}
+        {{- end }}
 ---
 {{ end }}
 apiVersion: v1
@@ -75,4 +114,8 @@ metadata:
   name: {{ .Release.Name }}
 spec:
   selector: {app: {{ .Release.Name }}-api}
-  ports: [{port: 80, targetPort: 8080}]
+  ports:
+    - {name: http, port: 80, targetPort: 8080}
+    {{- if .Values.internalTLS.enabled }}
+    - {name: integration-tls, port: 8443, targetPort: internal-tls}
+    {{- end }}

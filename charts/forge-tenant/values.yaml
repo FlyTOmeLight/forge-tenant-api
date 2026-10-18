@@ -8,6 +8,10 @@ api:
   replicas: 1
 worker:
   replicas: 1
+  # Optional additional worker-only environment, e.g. STORAGE_* credentials.
+  existingSecret: ""
+  # Defaults to the shared caSecret; the worker may trust a different upstream CA.
+  caSecret: ""
 postgres:
   enabled: true
   image: postgres:17.6-alpine
@@ -18,3 +22,11 @@ ingress:
   className: ""
   host: ""
   tlsSecret: ""
+
+# TLS for internal service-to-service API calls; certificate material stays in a Secret.
+internalTLS:
+  enabled: false
+  existingSecret: ""
+  certificateKey: tls.crt
+  privateKeyKey: tls.key
+  image: nginx:1.28.0-alpine

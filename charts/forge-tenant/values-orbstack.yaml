@@ -1,0 +1,20 @@
+# OrbStack namespace forge-tenant-split; secrets are pre-existing, never generated here.
+image:
+  repository: forge-tenant-api
+  tag: artifact-integration-20261016
+  pullPolicy: Never
+configRevision: artifact-persisted-20261016
+existingSecret: forge-tenant-env
+caSecret: forge-tenant-ca
+api:
+  replicas: 1
+worker:
+  replicas: 1
+  existingSecret: tenant-storage-integration
+  caSecret: artifact-integration-tls
+internalTLS:
+  enabled: true
+  existingSecret: artifact-integration-tls
+  certificateKey: tenant.crt
+  privateKeyKey: tenant.key
+  image: nginx:1.28.0-alpine
