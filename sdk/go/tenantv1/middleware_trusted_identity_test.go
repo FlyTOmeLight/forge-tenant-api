@@ -85,9 +85,10 @@ func TestMiddlewareServiceAuth(t *testing.T) {
 		status      int
 		service     string
 	}{
-		{name: "static token", token: propagationServiceToken, status: http.StatusOK, service: "agentic-kit-api"},
-		{name: "dynamic token", token: propagationServiceToken, dynamic: true, status: http.StatusOK, service: "coding"},
-		{name: "rejected dynamically", token: propagationServiceToken, dynamic: true, status: http.StatusUnauthorized},
+		{name: "accepted", token: propagationServiceToken, status: http.StatusOK, service: "agentic-kit-api"},
+		{name: "resolved dynamically", token: propagationServiceToken, dynamic: true, status: http.StatusOK, service: "coding"},
+		{name: "rejected credential", token: propagationServiceToken, dynamic: true, status: http.StatusUnauthorized},
+		{name: "resolver unavailable", token: propagationServiceToken, dynamic: true, status: http.StatusServiceUnavailable, service: "unavailable"},
 		{name: "missing token", status: http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,8 +97,15 @@ func TestMiddlewareServiceAuth(t *testing.T) {
 			}}
 			if tc.dynamic {
 				config = ServiceAuthConfig{Authenticate: func(context.Context, string) (string, error) {
+					if tc.service == "unavailable" {
+						return "", errors.New("forge-tenant timed out")
+					}
 					if tc.service == "" {
-						return "", errors.New("rejected")
+						return "", &Error{
+							Status:  http.StatusUnauthorized,
+							Code:    "SERVICE_AUTH_REQUIRED",
+							Message: "rejected",
+						}
 					}
 					return tc.service, nil
 				}}

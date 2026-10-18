@@ -25,19 +25,47 @@ type ServiceAuthConfig struct {
 	Authorize func(c *core.Context) error
 }
 
-func (config ServiceAuthConfig) authenticate(c *core.Context) (string, bool) {
+func (config ServiceAuthConfig) authenticate(c *core.Context) (string, error) {
 	if config.Authenticate == nil {
-		return "", false
+		return "", &Error{
+			Status:  http.StatusUnauthorized,
+			Code:    "SERVICE_AUTH_REQUIRED",
+			Message: "missing service credential",
+		}
 	}
 	token, hasBearer := bearerCredential(c.GetHeader("Authorization"))
 	if !hasBearer || token == "" {
-		return "", false
+		return "", &Error{
+			Status:  http.StatusUnauthorized,
+			Code:    "SERVICE_AUTH_REQUIRED",
+			Message: "missing service credential",
+		}
 	}
 	service, err := config.Authenticate(c.Request.Context(), token)
-	if err != nil || service == "" {
-		return "", false
+	if err != nil {
+		return "", err
 	}
-	return service, true
+	if service == "" {
+		return "", &Error{
+			Status:  http.StatusUnauthorized,
+			Code:    "SERVICE_AUTH_REQUIRED",
+			Message: "unknown service credential",
+		}
+	}
+	return service, nil
+}
+
+// abortServiceAuth rejects the caller. A credential rejection reported as
+// *Error keeps its status, so a bad service key stays 401. Every other error,
+// including a forge-tenant timeout or outage, becomes 503: the caller must be
+// able to tell an infrastructure failure from a rejected credential.
+func abortServiceAuth(c *core.Context, err error) {
+	var detail *Error
+	if errors.As(err, &detail) && detail.Status == http.StatusUnauthorized {
+		serrors.Abort(c, http.StatusUnauthorized, "Unauthorized", "unknown internal service key")
+		return
+	}
+	serrors.Abort(c, http.StatusServiceUnavailable, "ServiceUnavailable", identityUnavailableMessage)
 }
 
 // MiddlewareServiceAuth authenticates an internal caller by its service API key
@@ -49,9 +77,9 @@ func MiddlewareServiceAuth(config ServiceAuthConfig) (core.HandlerFunc, error) {
 		return nil, errors.New("service auth requires an Authenticate function")
 	}
 	return func(c *core.Context) {
-		service, ok := config.authenticate(c)
-		if !ok {
-			serrors.Abort(c, http.StatusUnauthorized, "Unauthorized", "unknown internal service key")
+		service, err := config.authenticate(c)
+		if err != nil {
+			abortServiceAuth(c, err)
 			return
 		}
 		c.Set(constants.KeyUserID, service)
@@ -84,9 +112,9 @@ func MiddlewareInternalPropagation(config ServiceAuthConfig) (core.HandlerFunc, 
 		return nil, err
 	}
 	return func(c *core.Context) {
-		service, ok := config.authenticate(c)
-		if !ok {
-			serrors.Abort(c, http.StatusUnauthorized, "Unauthorized", "unknown internal service key")
+		service, err := config.authenticate(c)
+		if err != nil {
+			abortServiceAuth(c, err)
 			return
 		}
 		c.Set(constants.KeyUserID, service)

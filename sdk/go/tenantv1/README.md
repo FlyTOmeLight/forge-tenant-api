@@ -98,7 +98,7 @@ propagation, err := tenantv1.MiddlewareInternalPropagation(serviceAuth)
 internal := routes.Group("/internal", caller, propagation)
 ```
 
-顺序不能换：`MiddlewareInternalPropagation` 读取 `MiddlewareServiceAuth` 写入的调用方身份。只校验服务身份、不需要用户身份时，只装 `MiddlewareServiceAuth`。`ServiceAuthConfig.Authenticate` 由接入方实现，用调用方的服务 key 向 forge-tenant 换出服务名。`Authorize` 可选，用于拒绝特定调用方的透传。
+顺序不能换：`MiddlewareInternalPropagation` 读取 `MiddlewareServiceAuth` 写入的调用方身份。只校验服务身份、不需要用户身份时，只装 `MiddlewareServiceAuth`。`ServiceAuthConfig.Authenticate` 由接入方实现，用调用方的服务 key 向 forge-tenant 换出服务名。凭据被拒绝时返回 `*tenantv1.Error` 且状态为 401，中间件保持 401；其余错误（超时、网络故障、租户服务 5xx）统一返回 503，便于调用方把基础设施故障和凭据拒绝区分开。`Authorize` 可选，用于拒绝特定调用方的透传。
 
 | 中间件 | 运行环境 | 作用 | 放在哪 |
 | --- | --- | --- | --- |

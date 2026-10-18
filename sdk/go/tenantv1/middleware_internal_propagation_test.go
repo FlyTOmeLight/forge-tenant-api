@@ -89,7 +89,11 @@ func TestMiddlewareInternalPropagation(t *testing.T) {
 					case propagationPersonToken:
 						return "person", nil
 					default:
-						return "", errors.New("unknown service token")
+						return "", &Error{
+							Status:  http.StatusUnauthorized,
+							Code:    "SERVICE_AUTH_REQUIRED",
+							Message: "unknown service token",
+						}
 					}
 				},
 			}
