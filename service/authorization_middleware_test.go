@@ -5,9 +5,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/FlyTOmeLight/server-go/constants"
+
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/identity"
 	"github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1"
-	"github.com/FlyTOmeLight/server-go/constants"
 )
 
 func TestAuthorizationMiddlewareWithPostgres(t *testing.T) {

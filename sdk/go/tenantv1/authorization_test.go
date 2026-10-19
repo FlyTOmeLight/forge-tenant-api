@@ -222,18 +222,26 @@ func TestAuthorizationScopeHeaders(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 						t.Error(err)
 					}
-					if in.TenantID != tc.wantTenant || (in.ProjectID == nil) != (tc.wantProject == "") ||
+					if in.TenantID != tc.wantTenant ||
+						(in.ProjectID == nil) != (tc.wantProject == "") ||
 						(in.ProjectID != nil && *in.ProjectID != tc.wantProject) {
 						t.Errorf("scope request = %+v", in)
 					}
 					_ = json.NewEncoder(w).Encode(ResolveScopeResponse{
-						UserID: "user", Principal: &Principal{ID: "user"},
-						TenantID: in.TenantID, ProjectID: in.ProjectID, OwnershipState: "active",
+						UserID:         "user",
+						Principal:      &Principal{ID: "user"},
+						TenantID:       in.TenantID,
+						ProjectID:      in.ProjectID,
+						OwnershipState: "active",
 					})
 				case "/internal/v1/access/check":
 					accessCalls.Add(1)
 					_ = json.NewEncoder(w).Encode(
-						CheckAccessResponse{Allowed: true, TenantID: tc.wantTenant, ProjectID: tc.wantProject},
+						CheckAccessResponse{
+							Allowed:   true,
+							TenantID:  tc.wantTenant,
+							ProjectID: tc.wantProject,
+						},
 					)
 				default:
 					t.Errorf("unexpected path %s", r.URL.Path)
@@ -280,7 +288,12 @@ func TestAuthorizationScopeHeaders(t *testing.T) {
 			})).ServeHTTP(response, request)
 			if tc.wantStatus == 204 {
 				if !handled || response.Code != http.StatusNoContent || scopeCalls.Load() != 1 {
-					t.Fatalf("handled=%v status=%d calls=%d", handled, response.Code, scopeCalls.Load())
+					t.Fatalf(
+						"handled=%v status=%d calls=%d",
+						handled,
+						response.Code,
+						scopeCalls.Load(),
+					)
 				}
 				if (accessCalls.Load() == 1) != (tc.action != "") {
 					t.Errorf("access calls = %d", accessCalls.Load())
@@ -289,7 +302,12 @@ func TestAuthorizationScopeHeaders(t *testing.T) {
 			}
 			assertIdentityError(t, response, tc.wantStatus, tc.wantCode, "")
 			if handled || scopeCalls.Load() != 0 || accessCalls.Load() != 0 {
-				t.Errorf("rejected request handled=%v calls=%d/%d", handled, scopeCalls.Load(), accessCalls.Load())
+				t.Errorf(
+					"rejected request handled=%v calls=%d/%d",
+					handled,
+					scopeCalls.Load(),
+					accessCalls.Load(),
+				)
 			}
 		})
 	}

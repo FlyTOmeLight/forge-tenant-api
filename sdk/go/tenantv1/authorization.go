@@ -158,8 +158,8 @@ func mergeScope(scope Scope, r *http.Request) (Scope, error) {
 		header string
 		target **string
 	}{
-		{constants.HeaderTenantID, &scope.TenantID},
-		{constants.HeaderProjectID, &scope.ProjectID},
+		{header: constants.HeaderTenantID, target: &scope.TenantID},
+		{header: constants.HeaderProjectID, target: &scope.ProjectID},
 	} {
 		values := r.Header.Values(candidate.header)
 		switch len(values) {
