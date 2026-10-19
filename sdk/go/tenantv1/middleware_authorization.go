@@ -10,7 +10,7 @@ import (
 
 // PublishAuthorizationContext copies verified identity and optional scope from the
 // request context onto Gin keys. Tenant and project IDs come only from successful
-// authorization, never from URL parameters or request headers.
+// authorization, never directly from URL parameters or request headers.
 func PublishAuthorizationContext(c *core.Context, r *http.Request) {
 	principal, ok := PrincipalFromContext(r.Context())
 	if !ok || principal == nil {
@@ -29,8 +29,11 @@ func PublishAuthorizationContext(c *core.Context, r *http.Request) {
 	}
 }
 
-// MiddlewareAuthorization validates identity and URL scope before running later handlers.
-// Without a Scope callback it reads the router's tid and pid path parameters.
+// MiddlewareAuthorization validates identity and the selected scope before running
+// later handlers. The scope combines the route's tid and pid path parameters with
+// the x-forge-tenant-id and x-forge-project-id headers; a dimension present in
+// both must agree. Without a Scope callback it reads the tid and pid path
+// parameters.
 func MiddlewareAuthorization(config AuthorizationConfig) core.HandlerFunc {
 	return func(c *core.Context) {
 		requestConfig := config

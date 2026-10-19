@@ -110,7 +110,7 @@ internal := routes.Group("/internal", caller, propagation)
 | `MiddlewareServiceAuth` | Gin | 校验内部服务 key，写入调用方服务名 | 内部路由的第一个 |
 | `MiddlewareInternalPropagation` | Gin | 采纳 `x-impersonate-target-*` | 紧跟 `MiddlewareServiceAuth` |
 
-凭据规则：Cookie 与 Bearer 不能同时出现，返回 `400 AMBIGUOUS_IDENTITY_PROOF`；`X-User-ID`、`X-Tenant-ID`、`X-Project-ID` 这类用户头和 query 参数不能当作身份或范围来源。
+凭据规则：Cookie 与 Bearer 不能同时出现，返回 `400 AMBIGUOUS_IDENTITY_PROOF`。身份只来自 Cookie 或 Bearer；`x-forge-user-id` 只由受信网关路径的 `MiddlewareTrustedIdentity` 采纳，用 `Identity` / `Authorization` 的路由不接受它作为身份。`x-forge-tenant-id`、`x-forge-project-id` 在 `Authorization` 路由上只作为待验证的范围选择，query 参数不能作为身份或范围来源。
 
 ## 身份中间件
 
@@ -149,11 +149,14 @@ routes.GET("/me", tenantv1.MiddlewareIdentity(client), func(c *core.Context) {
 
 ## 范围鉴权中间件
 
-需要租户或项目范围的业务路由使用 `tenantv1.Authorization`。`AuthorizationConfig` 声明服务端路由要求，不能从请求头或请求体读取要求的权限：
+需要租户或项目范围的业务路由使用 `tenantv1.Authorization`。`AuthorizationConfig` 声明服务端路由要求，不能从请求体或 query 参数读取要求的权限：
 
-- `Scope` 只提取 URL 参数。`TenantID`、`ProjectID` 为 `*string`：`nil` 表示未提供，空字符串或首尾空白表示非法，返回 400，不能降级为无范围请求。标准 `net/http` 必须提供此回调。
+- 范围来源是路由的 URL 参数和 `x-forge-tenant-id`、`x-forge-project-id` 两个请求头，默认同时生效。两处都给出同一维度且不一致时返回 400 `INVALID_SCOPE`，不自动选其中一个；重复的请求头同样返回 400。这两个头只表示请求选择，`ResolveScope` 验证后才发布。
+- `Scope` 提取 URL 参数。`TenantID`、`ProjectID` 为 `*string`：`nil` 表示未提供，空字符串或首尾空白表示非法，返回 400，不能降级为无范围请求。标准 `net/http` 必须提供此回调；没有路径参数的路由可以返回空 `Scope`，范围只来自请求头。
 - `RequireTenant: true` 用于必须带租户的路由。仅验证身份的路由返回 `Scope{}`。
-- `Action: tenantv1.AccessRead / AccessWrite / AccessManage` 用于项目路由，同时要求租户和项目参数。缺少任一参数返回 400；提供项目却未配置 Action，或 Action 非法、Client 未初始化、标准适配器缺 Scope 回调，都返回脱敏的 503 并阻断 handler。
+- `Action: tenantv1.AccessRead / AccessWrite / AccessManage` 用于需要项目操作权限的路由，只要求存在项目范围。缺少项目返回 400。
+- `Action` 为空时，项目范围只验证租户成员资格和项目归属，不调用 `CheckAccess`。适用于业务对象不受项目 grants 管辖的路由；`AuthorizationContext.Action` 保持空值。
+- 提供了项目却没有租户返回 400 `SCOPE_REQUIRED`，`Action` 非法、Client 未初始化、标准适配器缺 `Scope` 回调返回脱敏的 503 并阻断 handler。
 
 ```go
 // 注册到 ServeMux 后，PathValue 才能读取匹配路由中的 URL 参数。
@@ -170,11 +173,11 @@ mux.Handle("GET /tenants/{tid}/projects/{pid}/documents/{id}",
     })(http.HandlerFunc(getDocument)))
 ```
 
-没有范围时中间件调用 `ResolveIdentity`；有租户时只调用 `ResolveScope` 取得身份并验证租户成员资格，项目范围还验证项目属于该租户。项目路由随后调用 `CheckAccess`，只有 `Allowed=true` 且响应范围一致才放行。不会重复调用 `ResolveIdentity`，也不按 HTTP 方法推断项目权限。`ResolveScope` 不负责项目权限，不能单独替代 `CheckAccess`。
+没有范围时中间件调用 `ResolveIdentity`；有租户时只调用 `ResolveScope` 取得身份并验证租户成员资格，项目范围还验证项目属于该租户。配置了 `Action` 的项目路由随后调用 `CheckAccess`，只有 `Allowed=true` 且响应范围一致才放行。不会重复调用 `ResolveIdentity`，也不按 HTTP 方法推断项目权限。`ResolveScope` 不负责项目权限，不能单独替代 `CheckAccess`。
 
-Cookie 和 Bearer 使用同一凭据提取规则；Cookie 转发原始 method、Origin 和 CSRF。用户 ID 只取已验证 Principal，`X-User-ID`、`X-Tenant-ID`、`X-Project-ID` 等用户头不作为范围或身份来源。未找到作用域保留 `404 SCOPE_NOT_FOUND`，无权限返回 403；服务调用失败、服务 key 被拒绝和响应身份／范围不一致返回脱敏的 503。任何失败均不进入业务 handler。
+Cookie 和 Bearer 使用同一凭据提取规则；Cookie 转发原始 method、Origin 和 CSRF。用户 ID 只取已验证 Principal。`x-forge-tenant-id`、`x-forge-project-id` 是待验证的范围选择，`ResolveScope` 通过后才发布；用 `Authorization` 的路由不接受 `x-forge-user-id` 作为身份来源，该头只由受信网关路径的 `MiddlewareTrustedIdentity` 采纳。query 参数不作为范围来源。未找到作用域保留 `404 SCOPE_NOT_FOUND`，无权限返回 403；服务调用失败、服务 key 被拒绝和响应身份／范围不一致返回脱敏的 503。任何失败均不进入业务 handler。
 
-`MiddlewareAuthorization(tenantv1.AuthorizationConfig)` 通过 `middleware.HTTPAuthorization` 接入标准 `Authorization` 逻辑：默认从 Gin 路由读取 `:tid`、`:pid`（`Params.Get`，区分“未提供”与空字符串）。也可自定义 `Scope` 回调。成功后写入 `constants.KeyUserID`，范围校验通过时写入 `KeyTenantID`、`KeyProjectID`；`AuthorizationFromContext` 仍可从 `c.Request.Context()` 读取 `Principal` 与 `Action`。
+`MiddlewareAuthorization(tenantv1.AuthorizationConfig)` 通过 `middleware.HTTPAuthorization` 接入标准 `Authorization` 逻辑：默认从 Gin 路由读取 `:tid`、`:pid`（`Params.Get`，区分“未提供”与空字符串），并同样读取范围请求头。也可自定义 `Scope` 回调。成功后写入 `constants.KeyUserID`，范围校验通过时写入 `KeyTenantID`、`KeyProjectID`；`AuthorizationFromContext` 仍可从 `c.Request.Context()` 读取 `Principal` 与 `Action`。
 
 ```go
 routes.GET("/tenants/:tid/projects/:pid/documents/:id",

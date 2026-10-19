@@ -6,10 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/FlyTOmeLight/server-go/constants"
 )
 
-// Scope contains only URL parameters. Nil means absent; a pointer to an empty
-// string means supplied but invalid and must never fall back to identity-only.
+// Scope is the scope a request selects. Nil means absent; a pointer to an
+// empty string means supplied but invalid and must never fall back to
+// identity-only. Neither source is trusted until ResolveScope verifies it.
 type Scope struct {
 	TenantID  *string
 	ProjectID *string
@@ -19,15 +22,17 @@ type Scope struct {
 type AuthorizationConfig struct {
 	Client *Client
 
-	// Scope must extract only URL parameters, never headers or request bodies.
-	// The net/http adapter requires this callback, even for identity-only routes.
+	// Scope extracts the URL selection. It may return an empty Scope for routes
+	// without URL parameters; headers still apply. The net/http adapter requires
+	// this callback, even for identity-only routes.
 	Scope func(*http.Request) (Scope, error)
 
-	// RequireTenant rejects requests without a tenant URL parameter.
+	// RequireTenant rejects requests without a tenant selection.
 	RequireTenant bool
 
-	// Action is the permission this route requires. A nonempty action requires
-	// both tenant and project parameters. Project scopes require an action.
+	// Action is the project permission this route requires. A nonempty action
+	// requires a project selection. An empty action validates tenant membership
+	// and project ownership only, without consulting project grants.
 	Action AccessAction
 }
 
@@ -48,9 +53,9 @@ func AuthorizationFromContext(ctx context.Context) (*AuthorizationContext, bool)
 	return result, result != nil
 }
 
-// Authorization authenticates every request and validates its URL scope before
-// calling next. It does not check ownership of business resources loaded by next.
-// Invalid route configuration fails closed with a sanitized 503 response.
+// Authorization authenticates every request and validates its selected scope
+// before calling next. It does not check ownership of business resources loaded
+// by next. Invalid route configuration fails closed with a sanitized 503 response.
 func Authorization(config AuthorizationConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,31 +76,32 @@ func (config AuthorizationConfig) authorize(r *http.Request) (*AuthorizationCont
 		(config.Action != "" && config.Action != AccessRead && config.Action != AccessWrite && config.Action != AccessManage) {
 		return nil, errors.New("invalid authorization middleware configuration")
 	}
-	scope, err := config.Scope(r)
+	urlScope, err := config.Scope(r)
 	if err != nil {
 		// Extractors may include input values in errors; never expose them.
-		return nil, &Error{Status: http.StatusBadRequest, Code: "INVALID_SCOPE", Message: "invalid URL scope"}
+		return nil, &Error{Status: http.StatusBadRequest, Code: "INVALID_SCOPE", Message: "invalid scope"}
+	}
+	scope, err := mergeScope(urlScope, r)
+	if err != nil {
+		return nil, err
 	}
 	for _, id := range []*string{scope.TenantID, scope.ProjectID} {
 		if id != nil && (*id == "" || *id != strings.TrimSpace(*id)) {
 			return nil, &Error{
 				Status:  http.StatusBadRequest,
 				Code:    "INVALID_SCOPE",
-				Message: "invalid URL scope",
+				Message: "invalid scope",
 			}
 		}
 	}
 	if (scope.ProjectID != nil && scope.TenantID == nil) ||
 		(config.RequireTenant && scope.TenantID == nil) ||
-		(config.Action != "" && (scope.TenantID == nil || scope.ProjectID == nil)) {
+		(config.Action != "" && scope.ProjectID == nil) {
 		return nil, &Error{
 			Status:  http.StatusBadRequest,
 			Code:    "SCOPE_REQUIRED",
-			Message: "required URL scope is missing",
+			Message: "required scope is missing",
 		}
-	}
-	if scope.ProjectID != nil && config.Action == "" {
-		return nil, errors.New("project authorization requires a configured action")
 	}
 	proof, err := RequestProof(r, DefaultSessionCookie)
 	if err != nil {
@@ -120,7 +126,7 @@ func (config AuthorizationConfig) authorize(r *http.Request) (*AuthorizationCont
 	result.Principal = resolved.Principal
 	result.TenantID = &resolved.TenantID
 	result.ProjectID = resolved.ProjectID
-	if result.ProjectID == nil {
+	if result.ProjectID == nil || config.Action == "" {
 		return result, nil
 	}
 	access, err := config.Client.CheckAccess(r.Context(), &CheckAccessRequest{
@@ -142,6 +148,38 @@ func (config AuthorizationConfig) authorize(r *http.Request) (*AuthorizationCont
 	}
 	result.Action = config.Action
 	return result, nil
+}
+
+// mergeScope combines the URL selection with the scope headers. A dimension
+// supplied by both sources must agree; otherwise the request is ambiguous and
+// is rejected rather than resolved by an arbitrary precedence rule.
+func mergeScope(scope Scope, r *http.Request) (Scope, error) {
+	for _, candidate := range []struct {
+		header string
+		target **string
+	}{
+		{constants.HeaderTenantID, &scope.TenantID},
+		{constants.HeaderProjectID, &scope.ProjectID},
+	} {
+		values := r.Header.Values(candidate.header)
+		switch len(values) {
+		case 0:
+			continue
+		case 1:
+		default:
+			return Scope{}, &Error{
+				Status: http.StatusBadRequest, Code: "INVALID_SCOPE", Message: "invalid scope",
+			}
+		}
+		value := values[0]
+		if *candidate.target != nil && **candidate.target != value {
+			return Scope{}, &Error{
+				Status: http.StatusBadRequest, Code: "INVALID_SCOPE", Message: "invalid scope",
+			}
+		}
+		*candidate.target = &value
+	}
+	return scope, nil
 }
 
 func writeAuthorizationError(w http.ResponseWriter, err error) {
