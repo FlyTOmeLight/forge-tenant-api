@@ -22,6 +22,7 @@ func TestMiddlewareAuthorizationPublishesScope(t *testing.T) {
 		{name: "identity bearer", route: "/me", path: "/me"},
 		{name: "tenant cookie", route: "/tenants/:tid", path: "/tenants/tenant", cookie: true},
 		{name: "project bearer", route: "/tenants/:tid/projects/:pid", path: "/tenants/tenant/projects/project", action: "write"},
+		{name: "project without action", route: "/tenants/:tid/projects/:pid", path: "/tenants/tenant/projects/project"},
 		{name: "custom URL extractor", route: "/orgs/:org/repos/:repo", path: "/orgs/tenant/repos/project", action: "read", custom: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,7 +121,7 @@ func TestMiddlewareAuthorizationPublishesScope(t *testing.T) {
 					c.GetString(constants.KeyTenantID) != "tenant" {
 					t.Errorf("tenant scope: %+v key=%q", auth, c.GetString(constants.KeyTenantID))
 				}
-				if tc.action != "" {
+				if strings.Contains(tc.route, "/projects/") {
 					if auth.ProjectID == nil || *auth.ProjectID != "project" ||
 						c.GetString(constants.KeyProjectID) != "project" {
 						t.Errorf(
@@ -137,9 +138,14 @@ func TestMiddlewareAuthorizationPublishesScope(t *testing.T) {
 				"https://service.test"+tc.path+"?tid=forged&pid=forged",
 				nil,
 			)
-			request.Header.Set("X-User-ID", "forged")
-			request.Header.Set("X-Tenant-ID", "forged")
-			request.Header.Set("X-Project-ID", "forged")
+			request.Header.Set(constants.HeaderUserID, "forged")
+			// Scope headers agree with the route parameters; agreement must pass.
+			if tc.route != "/me" {
+				request.Header.Set(constants.HeaderTenantID, "tenant")
+			}
+			if strings.Contains(tc.route, "/projects/") {
+				request.Header.Set(constants.HeaderProjectID, "project")
+			}
 			if tc.cookie {
 				request.AddCookie(&http.Cookie{Name: DefaultSessionCookie, Value: "session"})
 				request.Header.Set("Origin", "https://service.test")
@@ -170,15 +176,16 @@ func TestMiddlewareAuthorizationAbortsRejectedRequests(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		name, route, path, action, response string
+		headerTenant, headerProject         string
 		requireTenant, nilClient            bool
 		upstreamStatus, wantStatus          int
 	}{
 		{name: "tenant missing", route: "/me", path: "/me", requireTenant: true, wantStatus: 400},
+		{name: "scope header conflict", route: "/tenants/:tid", path: "/tenants/tenant", headerTenant: "other", wantStatus: 400},
 		{name: "project missing", route: "/tenants/:tid", path: "/tenants/tenant", action: "read", wantStatus: 400},
 		{name: "tenant absent with project", route: "/projects/:pid", path: "/projects/project", action: "read", wantStatus: 400},
 		{name: "empty supplied scope", route: "/tenants/:tid", path: "/tenants/%20", wantStatus: 400},
 		{name: "nil client", route: "/me", path: "/me", nilClient: true, wantStatus: 503},
-		{name: "missing project action", route: "/tenants/:tid/projects/:pid", path: "/tenants/tenant/projects/project", wantStatus: 503},
 		{name: "wrong project", route: "/tenants/:tid/projects/:pid", path: "/tenants/tenant/projects/project", action: "read", upstreamStatus: 404, response: `{"error":{"code":"SCOPE_NOT_FOUND","message":"scope missing"}}`, wantStatus: 404},
 		{name: "permission denied", route: "/tenants/:tid/projects/:pid", path: "/tenants/tenant/projects/project", action: "manage", response: `{"allowed":false}`, wantStatus: 403},
 		{name: "service unavailable", route: "/tenants/:tid", path: "/tenants/tenant", upstreamStatus: 500, response: `{"error":{"code":"INTERNAL","message":"secret"}}`, wantStatus: 503},
@@ -217,6 +224,12 @@ func TestMiddlewareAuthorizationAbortsRejectedRequests(t *testing.T) {
 			)
 			request := httptest.NewRequest(http.MethodGet, "http://service.test"+tc.path, nil)
 			request.Header.Set("Authorization", "Bearer user-key")
+			if tc.headerTenant != "" {
+				request.Header.Set(constants.HeaderTenantID, tc.headerTenant)
+			}
+			if tc.headerProject != "" {
+				request.Header.Set(constants.HeaderProjectID, tc.headerProject)
+			}
 			response := httptest.NewRecorder()
 			engine.ServeHTTP(response, request)
 			if response.Code != tc.wantStatus || strings.Contains(response.Body.String(), "secret") {

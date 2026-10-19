@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/FlyTOmeLight/server-go/constants"
+
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/identity"
 	"github.com/FlyTOmeLight/forge-tenant-api/sdk/go/tenantv1"
 )
@@ -15,6 +17,8 @@ func TestAuthorizationMiddlewareWithPostgres(t *testing.T) {
 		cookie          bool
 		tenant, project string
 		action          tenantv1.AccessAction
+		headerTenant    string
+		headerProject   string
 		mutate          string
 		status          int
 	}{
@@ -22,6 +26,10 @@ func TestAuthorizationMiddlewareWithPostgres(t *testing.T) {
 		{name: "tenant member", tenant: "t", status: 204},
 		{name: "API key project write", tenant: "t", project: "p", action: tenantv1.AccessWrite, status: 204},
 		{name: "Cookie project write", cookie: true, tenant: "t", project: "p", action: tenantv1.AccessWrite, status: 204},
+		{name: "project without action", tenant: "t", project: "ungranted", status: 204},
+		{name: "scope header agrees", tenant: "t", project: "p", action: tenantv1.AccessWrite, headerTenant: "t", headerProject: "p", status: 204},
+		{name: "scope header contradicts", tenant: "t", project: "p", action: tenantv1.AccessWrite, headerTenant: "t", headerProject: "ungranted", status: 400},
+		{name: "tenant header contradicts", tenant: "t", headerTenant: "other", status: 400},
 		{name: "manage denied", tenant: "t", project: "p", action: tenantv1.AccessManage, status: 403},
 		{name: "project without grant", tenant: "t", project: "ungranted", action: tenantv1.AccessRead, status: 403},
 		{name: "foreign project", tenant: "t", project: "foreign", action: tenantv1.AccessRead, status: 404},
@@ -87,7 +95,13 @@ func TestAuthorizationMiddlewareWithPostgres(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "http://service.test/resource", nil)
 			request.SetPathValue("tid", tc.tenant)
 			request.SetPathValue("pid", tc.project)
-			request.Header.Set("X-User-ID", "operator")
+			request.Header.Set(constants.HeaderUserID, "operator")
+			if tc.headerTenant != "" {
+				request.Header.Set(constants.HeaderTenantID, tc.headerTenant)
+			}
+			if tc.headerProject != "" {
+				request.Header.Set(constants.HeaderProjectID, tc.headerProject)
+			}
 			if tc.cookie {
 				request.AddCookie(&http.Cookie{Name: tenantv1.DefaultSessionCookie, Value: f.member})
 				request.Header.Set("Origin", f.a.Account.Config.PublicURL)

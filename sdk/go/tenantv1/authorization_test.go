@@ -9,11 +9,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/FlyTOmeLight/server-go/constants"
 )
 
 func TestAuthorizationIdentityAndScope(t *testing.T) {
 	for _, credential := range []string{"cookie", "bearer"} {
-		for _, action := range []string{"identity", "tenant", "read", "write", "manage"} {
+		for _, action := range []string{"identity", "tenant", "project", "read", "write", "manage"} {
 			t.Run(credential+"/"+action, func(t *testing.T) {
 				var identityCalls, scopeCalls, accessCalls atomic.Int32
 				principal := Principal{ID: "user", Name: "User", Operator: true}
@@ -29,9 +31,12 @@ func TestAuthorizationIdentityAndScope(t *testing.T) {
 					scope.TenantID = stringPointer("tenant")
 				}
 				var permission AccessAction
-				if action != "identity" && action != "tenant" {
+				if action != "identity" && action != "tenant" && action != "project" {
 					scope.ProjectID = stringPointer("project")
 					permission = AccessAction(action)
+				}
+				if action == "project" {
+					scope.ProjectID = stringPointer("project")
 				}
 				server := httptest.NewServer(
 					http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,10 +144,15 @@ func TestAuthorizationIdentityAndScope(t *testing.T) {
 					"https://service.test/resources?tenant_id=forged&project_id=forged",
 					nil,
 				)
-				request.Header.Set("X-User-ID", "forged")
-				request.Header.Set("X-Tenant-ID", "forged")
-				request.Header.Set("X-Project-ID", "forged")
+				request.Header.Set(constants.HeaderUserID, "forged")
 				request.Header.Set("X-Access-Action", "manage")
+				// The scope headers agree with the URL selection; agreement must pass.
+				if scope.TenantID != nil {
+					request.Header.Set(constants.HeaderTenantID, *scope.TenantID)
+				}
+				if scope.ProjectID != nil {
+					request.Header.Set(constants.HeaderProjectID, *scope.ProjectID)
+				}
 				if credential == "cookie" {
 					request.AddCookie(&http.Cookie{Name: DefaultSessionCookie, Value: "session"})
 					request.Header.Set("Origin", proof.Origin)
@@ -183,6 +193,126 @@ func TestAuthorizationIdentityAndScope(t *testing.T) {
 	}
 }
 
+func TestAuthorizationScopeHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name, urlTenant, urlProject, headerTenant, headerProject string
+		duplicate                                                bool
+		action                                                   AccessAction
+		wantTenant, wantProject                                  string
+		wantStatus                                               int
+		wantCode                                                 string
+	}{
+		{name: "URL only", urlTenant: "tenant", urlProject: "project", action: AccessRead, wantTenant: "tenant", wantProject: "project", wantStatus: 204},
+		{name: "header only", headerTenant: "tenant", headerProject: "project", action: AccessRead, wantTenant: "tenant", wantProject: "project", wantStatus: 204},
+		{name: "both agree", urlTenant: "tenant", urlProject: "project", headerTenant: "tenant", headerProject: "project", action: AccessRead, wantTenant: "tenant", wantProject: "project", wantStatus: 204},
+		{name: "tenant conflict", urlTenant: "tenant", headerTenant: "other", wantStatus: 400, wantCode: "INVALID_SCOPE"},
+		{name: "project conflict", urlTenant: "tenant", urlProject: "project", headerProject: "other", action: AccessRead, wantStatus: 400, wantCode: "INVALID_SCOPE"},
+		{name: "empty header", headerTenant: "", wantStatus: 400, wantCode: "INVALID_SCOPE"},
+		{name: "duplicate header", headerTenant: "tenant", duplicate: true, wantStatus: 400, wantCode: "INVALID_SCOPE"},
+		{name: "project without tenant", headerProject: "project", action: AccessRead, wantStatus: 400, wantCode: "SCOPE_REQUIRED"},
+		{name: "empty header project", headerTenant: "tenant", headerProject: "", wantStatus: 400, wantCode: "INVALID_SCOPE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var scopeCalls, accessCalls atomic.Int32
+			tenant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/internal/v1/scope/resolve":
+					scopeCalls.Add(1)
+					var in ResolveScopeRequest
+					if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+						t.Error(err)
+					}
+					if in.TenantID != tc.wantTenant ||
+						(in.ProjectID == nil) != (tc.wantProject == "") ||
+						(in.ProjectID != nil && *in.ProjectID != tc.wantProject) {
+						t.Errorf("scope request = %+v", in)
+					}
+					_ = json.NewEncoder(w).Encode(ResolveScopeResponse{
+						UserID:         "user",
+						Principal:      &Principal{ID: "user"},
+						TenantID:       in.TenantID,
+						ProjectID:      in.ProjectID,
+						OwnershipState: "active",
+					})
+				case "/internal/v1/access/check":
+					accessCalls.Add(1)
+					_ = json.NewEncoder(w).Encode(
+						CheckAccessResponse{
+							Allowed:   true,
+							TenantID:  tc.wantTenant,
+							ProjectID: tc.wantProject,
+						},
+					)
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer tenant.Close()
+			config := AuthorizationConfig{
+				Client: newTestClient(t, tenant.URL),
+				Action: tc.action,
+				Scope: func(*http.Request) (Scope, error) {
+					var scope Scope
+					if tc.urlTenant != "" {
+						scope.TenantID = stringPointer(tc.urlTenant)
+					}
+					if tc.urlProject != "" {
+						scope.ProjectID = stringPointer(tc.urlProject)
+					}
+					return scope, nil
+				},
+			}
+			handled := false
+			request := httptest.NewRequest(http.MethodGet, "http://service.test/resource", nil)
+			request.Header.Set("Authorization", "Bearer user-key")
+			if tc.headerTenant != "" || tc.name == "empty header" {
+				request.Header.Set(constants.HeaderTenantID, tc.headerTenant)
+			}
+			if tc.headerProject != "" || tc.name == "empty header project" {
+				request.Header.Set(constants.HeaderProjectID, tc.headerProject)
+			}
+			if tc.duplicate {
+				request.Header.Add(constants.HeaderTenantID, "other")
+			}
+			response := httptest.NewRecorder()
+			Authorization(config)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handled = true
+				auth, _ := AuthorizationFromContext(r.Context())
+				if auth.TenantID == nil || *auth.TenantID != tc.wantTenant ||
+					(auth.ProjectID == nil) != (tc.wantProject == "") ||
+					(auth.ProjectID != nil && *auth.ProjectID != tc.wantProject) {
+					t.Errorf("authorization = %+v", auth)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})).ServeHTTP(response, request)
+			if tc.wantStatus == 204 {
+				if !handled || response.Code != http.StatusNoContent || scopeCalls.Load() != 1 {
+					t.Fatalf(
+						"handled=%v status=%d calls=%d",
+						handled,
+						response.Code,
+						scopeCalls.Load(),
+					)
+				}
+				if (accessCalls.Load() == 1) != (tc.action != "") {
+					t.Errorf("access calls = %d", accessCalls.Load())
+				}
+				return
+			}
+			assertIdentityError(t, response, tc.wantStatus, tc.wantCode, "")
+			if handled || scopeCalls.Load() != 0 || accessCalls.Load() != 0 {
+				t.Errorf(
+					"rejected request handled=%v calls=%d/%d",
+					handled,
+					scopeCalls.Load(),
+					accessCalls.Load(),
+				)
+			}
+		})
+	}
+}
+
 func TestAuthorizationRejectsLocally(t *testing.T) {
 	for _, tc := range []struct {
 		name, tenant, project, action, credential, wantCode               string
@@ -191,13 +321,12 @@ func TestAuthorizationRejectsLocally(t *testing.T) {
 	}{
 		{name: "tenant required", requireTenant: true, wantStatus: 400, wantCode: "SCOPE_REQUIRED"},
 		{name: "project required", tenant: "tenant", action: "read", wantStatus: 400, wantCode: "SCOPE_REQUIRED"},
-		{name: "project action requires both", action: "write", wantStatus: 400, wantCode: "SCOPE_REQUIRED"},
+		{name: "project action requires project", action: "write", wantStatus: 400, wantCode: "SCOPE_REQUIRED"},
 		{name: "project without tenant", project: "project", action: "read", wantStatus: 400, wantCode: "SCOPE_REQUIRED"},
 		{name: "blank tenant cannot downgrade", tenant: " ", wantStatus: 400, wantCode: "INVALID_SCOPE"},
 		{name: "empty tenant cannot downgrade", tenant: "<empty>", wantStatus: 400, wantCode: "INVALID_SCOPE"},
 		{name: "empty project cannot downgrade", tenant: "tenant", project: "<empty>", action: "read", wantStatus: 400, wantCode: "INVALID_SCOPE"},
 		{name: "padded project", tenant: "tenant", project: " project ", action: "read", wantStatus: 400, wantCode: "INVALID_SCOPE"},
-		{name: "project without configured action", tenant: "tenant", project: "project", wantStatus: 503, wantCode: "IDENTITY_UNAVAILABLE"},
 		{name: "invalid action", action: "delete", wantStatus: 503, wantCode: "IDENTITY_UNAVAILABLE"},
 		{name: "missing extractor", noExtractor: true, wantStatus: 503, wantCode: "IDENTITY_UNAVAILABLE"},
 		{name: "nil client", nilClient: true, wantStatus: 503, wantCode: "IDENTITY_UNAVAILABLE"},
