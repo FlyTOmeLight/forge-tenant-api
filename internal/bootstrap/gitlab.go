@@ -47,6 +47,7 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 			state.Data["GITLAB_TOKEN_ID"] = strconv.FormatInt(valid.ID, 10)
 			state.Data["GITLAB_TOKEN_USER_ID"] = strconv.FormatInt(owner.ID, 10)
 			state.Data["GITLAB_TOKEN_NAME"] = valid.Name
+			state.Data["GITLAB_ISSUE_ATTEMPTS"] = "0"
 			return nil
 		}
 	}
@@ -103,6 +104,7 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 		state.Data["GITLAB_TOKEN_ID"] = strconv.FormatInt(verified.ID, 10)
 		state.Data["GITLAB_TOKEN_USER_ID"] = strconv.FormatInt(owner.ID, 10)
 		state.Data["GITLAB_TOKEN_NAME"] = verified.Name
+		state.Data["GITLAB_ISSUE_ATTEMPTS"] = "0"
 		// Save before marking complete. If the response is lost, the next run reads
 		// and validates this token first, so it is reused instead of revoked.
 		return store.Save(ctx, state)

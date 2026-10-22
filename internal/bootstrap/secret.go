@@ -40,17 +40,13 @@ type SecretStore struct {
 }
 
 func InClusterStore(namespace, name string) (*SecretStore, error) {
-	host, port := os.Getenv("KUBERNETES_SERVICE_HOST"), os.Getenv("KUBERNETES_SERVICE_PORT")
-	if host == "" || port == "" {
-		return nil, errors.New("Kubernetes service environment is required")
-	}
 	transport, err := client.NewHTTP("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 	if err != nil {
 		return nil, err
 	}
 	return &SecretStore{
 		HTTP: transport,
-		URL: "https://" + host + ":" + port + "/api/v1/namespaces/" + url.PathEscape(
+		URL: "https://kubernetes.default.svc/api/v1/namespaces/" + url.PathEscape(
 			namespace,
 		) + "/secrets/" + url.PathEscape(
 			name,

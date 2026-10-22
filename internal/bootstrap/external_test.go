@@ -257,6 +257,57 @@ func TestExternalBootstrapFirstAndRepeat(t *testing.T) {
 	}
 }
 
+func TestExternalBootstrapResetsIssuanceBudget(t *testing.T) {
+	f := newBootstrapFixture(t)
+	for round := range 4 {
+		if err := Run(context.Background(), f.config, f.store, f.server.Client()); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		f.mu.Lock()
+		attempts := f.secret["GITLAB_ISSUE_ATTEMPTS"]
+		issued := f.issued
+		clear(f.tokens)
+		f.mu.Unlock()
+		if attempts != "0" || issued != round+1 {
+			t.Fatalf("round %d: attempts=%s issued=%d", round, attempts, issued)
+		}
+	}
+}
+
+func TestExternalBootstrapResetsBudgetForValidSavedToken(t *testing.T) {
+	f := newBootstrapFixture(t)
+	if err := Run(context.Background(), f.config, f.store, f.server.Client()); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.secret["GITLAB_ISSUE_ATTEMPTS"] = "3"
+	f.mu.Unlock()
+	if err := Run(context.Background(), f.config, f.store, f.server.Client()); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.secret["GITLAB_ISSUE_ATTEMPTS"] != "0" || f.issued != 1 || f.revoked != 0 {
+		t.Fatal("valid saved token did not reset budget without replacement")
+	}
+}
+
+func TestExternalBootstrapPreservesExhaustedBudget(t *testing.T) {
+	f := newBootstrapFixture(t)
+	f.secret["GITLAB_ISSUE_ATTEMPTS"] = "2"
+	f.loseIssue = true
+	for range 2 {
+		if err := Run(context.Background(), f.config, f.store, f.server.Client()); err == nil {
+			t.Fatal("expected exhausted issuance budget")
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.secret["GITLAB_ISSUE_ATTEMPTS"] != "3" || f.issued != 1 || f.revoked != 1 || len(f.tokens) != 0 {
+		t.Fatal("rerun reset the exhausted budget or retained an orphan token")
+	}
+}
+
 func TestExternalBootstrapRejectsClientSecretDrift(t *testing.T) {
 	for _, tc := range []struct {
 		name, application, key string
