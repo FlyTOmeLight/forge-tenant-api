@@ -1,3 +1,24 @@
+fullnameOverride: ""
+global:
+  forge:
+    enabled: false
+    publicURL: ""
+    storageEndpoint: ""
+    external:
+      casdoorURL: ""
+      issuer: ""
+      organization: ""
+      certificate: ""
+      gitlabURL: ""
+      gitlabPublicURL: ""
+      gitlabOIDCClientID: ""
+      caPEM: ""
+    bootstrap:
+      username: ""
+      email: ""
+      gitlabTokenExpiresAt: ""
+initialization:
+  timeout: 5m
 image:
   repository: forge-tenant-api
   tag: dev

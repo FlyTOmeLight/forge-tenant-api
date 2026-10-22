@@ -37,6 +37,16 @@ func InsertCredential(
 	return result.RowsAffected, result.Error
 }
 
+// CredentialsForEnsure serializes bootstrap registration within the caller's transaction.
+func CredentialsForEnsure(ctx context.Context, tx *gorm.DB, service, name, hash string) ([]Credential, error) {
+	if err := tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(hashtext('forge-service-credential-ensure'))`).Error; err != nil {
+		return nil, err
+	}
+	var rows []Credential
+	err := tx.WithContext(ctx).Where("secret_hash=? OR (owner_kind='service' AND service_name=? AND name=?)", hash, service, name).Find(&rows).Error
+	return rows, err
+}
+
 func UserByCredentialHash(ctx context.Context, db *gorm.DB, secretHash string) (identity.User, error) {
 	var user identity.User
 	err := db.WithContext(ctx).

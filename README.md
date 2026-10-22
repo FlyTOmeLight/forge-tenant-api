@@ -69,20 +69,15 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 配置示例：`configs/env.example`。API 与 Worker 使用同一镜像的不同命令，独立扩缩容。现有数据库与 Casdoor / GitLab 实例沿用，账号和权限数据无需迁移到新数据库。
 
-本机已有联调配置时，保留其 `.local/deployment.json` 和集群 `forge-tenant-env`、`forge-tenant-ca` Secret；**不要重新生成密钥或数据库密码**。首次建立本机联调可执行：
+当前本机环境由相邻 `artifact-go` 仓库的 `charts/forge` umbrella chart 统一安装与升级，namespace 和 release 均为 `forge`。父 chart 负责生成和保留凭据、初始化数据库及专用外部身份；升级时复用现有 seed、TLS 和 PVC。安装输入与命令以该 chart 的 README 为准。
+
+旧本机准备、独立部署和共享 GitLab SSO 重配置脚本已移除；Forge 初始化仅通过父 chart 执行。浏览器入口通过前端 Service 提供：
 
 ```sh
-python3 scripts/prepare-lab.py --lab-config /path/to/infra.json --kubectl /path/to/kubectl
-FORGE_IMAGE_TAG=0.11.0 ./scripts/deploy-lab.sh
+kubectl --context orbstack -n forge port-forward service/forge-web 8483:80
 ```
 
-本机部署统一使用 namespace `forge-tenant-split`。后端 Helm release 为 `forge-tenant`，前端独立 release 为 `forge-tenant-web`。浏览器入口通过前端 Service 提供：
-
-```sh
-kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tenant-web 8483:80
-```
-
-后端单独调试可把 `service/forge-tenant` 转发到 8484。`PUBLIC_URL` 始终指向浏览器看到的前端 origin（本机部署为 `http://127.0.0.1:8483`），OIDC 回调为该 origin 的 `/auth/callback`，认证跳转页面由 Vue 提供。正式环境应使用 TLS Ingress 和可被集群拉取的版本化镜像；内置单副本 PostgreSQL 用于本机验证，外部数据库可设置 `postgres.enabled=false`。
+后端单独调试可把 `forge` namespace 的 `service/forge-tenant` 转发到 8484。`PUBLIC_URL` 始终指向浏览器看到的前端 origin（本机部署为 `http://127.0.0.1:8483`），OIDC 回调为该 origin 的 `/auth/callback`，认证跳转页面由 Vue 提供。正式环境应使用 TLS Ingress 和可被集群拉取的版本化镜像；内置单副本 PostgreSQL 用于本机验证，外部数据库可设置 `postgres.enabled=false`。
 
 ## 已有业务契约
 
@@ -105,12 +100,10 @@ HTTP 契约见 [docs/api.md](docs/api.md)，访问控制接入见 [docs/agent-in
 
 ## 当前本机环境
 
-当前使用 namespace `forge-tenant-split`、独立 PostgreSQL 和 OIDC client `forge-tenant-split-console`，浏览器入口为 `http://127.0.0.1:8483`。旧版一体化平台、旧 Python 执行器和 `forge-tenant` 命名空间已退役。历史数据库与源码保存在本机加密归档中。
-
-部署脚本默认使用当前命名空间。更新时用 `FORGE_IMAGE_TAG=<版本> ./scripts/deploy-lab.sh`。前端 E2E 默认使用同一命名空间。本机端口转发命令：
+当前使用 namespace / release `forge` 和专用 OIDC client `forge-forge-console`，浏览器入口为 `http://127.0.0.1:8483`。独立部署环境已退役，升级使用 `artifact-go/charts/forge`，不再使用本仓旧部署脚本。
 
 ```sh
-kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tenant-web 8483:80
+kubectl --context orbstack -n forge port-forward service/forge-web 8483:80
 ```
 
 后续功能已迁入：项目执行配置与接入检查、直接新建问题任务、多审查者、每轮配置快照、Agent 判断、代码差异，以及统一导航下的三种任务布局。研发业务现已迁到独立 forge-coding-api，真实模型交付结果见该仓库的验证记录。
@@ -119,15 +112,7 @@ kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tena
 
 当前工作台使用 `http://127.0.0.1:8483`，GitLab 使用 `http://127.0.0.1:18080`。首次登录 Forge 后，打开项目或 MR 会自动完成 GitLab 登录并返回原页面。升级前的 Forge 会话没有身份 Cookie，需要退出 Forge 后重新登录一次。
 
-当前配置由 `scripts/configure-lab-sso.py` 维护。脚本使用已有 Secret 中的凭证，在内存中更新既有 Casdoor/GitLab 客户端，保留账号、外部身份与项目权限。需要 Python 3、Ruby 标准 YAML 库、kubectl、Helm 和已安装版本的 GitLab Chart，不需要导出凭证：
-
-```sh
-# 保持转发运行，再在另一个终端运行配置脚本。
-kubectl --context orbstack -n tenant-lab port-forward svc/casdoor 18500:8000 --address 127.0.0.1
-python3 scripts/configure-lab-sso.py --gitlab-chart /path/to/gitlab-10.4.1.tgz
-```
-
-脚本默认更新 `forge-tenant-split`，可通过 `--namespace` 指定。GitLab 和 Forge 的浏览器入口必须保持可达。本机 GitLab 的 `18080` 转发已由用户级 launchd 服务 `dev.light.forge-gitlab-portforward` 托管，登录后启动，进程退出后自动重启。配置位于 `~/Library/LaunchAgents/dev.light.forge-gitlab-portforward.plist`，仅监听 `127.0.0.1`。可用 `launchctl print gui/$(id -u)/dev.light.forge-gitlab-portforward` 检查状态；不要同时启动另一条 GitLab 转发。工作台的 `8483` 转发同样由用户级 launchd 服务 `dev.light.forge-web-portforward` 托管，配置位于 `~/Library/LaunchAgents/dev.light.forge-web-portforward.plist`，在 Pod 更新导致断开后自动重连。配置后运行前端仓库的 `npm run test:sso`，使用已有可访问 MR 验证完整跳转，不创建或修改 MR。完整租户与权限回归使用 `npm run test:e2e`。
+共享 GitLab OmniAuth provider 保持现状；Forge umbrella 安装仅创建 Forge 专用集成，不修改共享回调或重启 `tenant-lab`。旧 SSO 重配置脚本已退出当前运维流程，不能用它升级 Forge。GitLab 和 Forge 的浏览器入口必须保持可达。本机 GitLab 的 `18080` 转发已由用户级 launchd 服务 `dev.light.forge-gitlab-portforward` 托管，登录后启动，进程退出后自动重启。配置位于 `~/Library/LaunchAgents/dev.light.forge-gitlab-portforward.plist`，仅监听 `127.0.0.1`。可用 `launchctl print gui/$(id -u)/dev.light.forge-gitlab-portforward` 检查状态；不要同时启动另一条 GitLab 转发。工作台的 `8483` 转发同样由用户级 launchd 服务 `dev.light.forge-web-portforward` 托管，配置位于 `~/Library/LaunchAgents/dev.light.forge-web-portforward.plist`，在 Pod 更新导致断开后自动重连。配置后运行前端仓库的 `npm run test:sso`，使用已有可访问 MR 验证完整跳转，不创建或修改 MR。完整租户与权限回归使用 `npm run test:e2e`。
 
 GitLab 实例管理员的本地账号入口为 `/users/sign_in?auto_sign_in=false`。配置依据：[GitLab OmniAuth](https://docs.gitlab.com/integration/omniauth/) 与 [OpenID Connect](https://docs.gitlab.com/administration/auth/oidc/)。
 

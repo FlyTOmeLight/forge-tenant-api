@@ -1,6 +1,8 @@
 # Tenant Helm deployment
 
-`existingSecret` supplies the application environment; `caSecret` supplies the trust bundle at `/ca`. Credentials and private keys remain in existing Kubernetes Secrets and are not rendered into Helm values.
+`existingSecret` supplies the application environment for standalone installs; `caSecret` supplies the trust bundle at `/ca`. Credentials and private keys remain in Kubernetes Secrets and are not rendered into Helm values. `fullnameOverride` replaces all chart resource names; standalone installs without it retain the release name as their service fullname.
+
+When `global.forge.enabled=true`, the fullname defaults to `<release>-tenant`. The parent chart supplies `<release>-tenant-env`, `<release>-external-credentials`, `<release>-artifact-env`, and `<release>-tls`; tenant mounts only `ca.crt` from the TLS Secret at `/tls`, and tenant certificate/key from that Secret into the API TLS sidecar. The external credential Secret is projected as a whole directory at `/external`, so init containers wait for the `BOOTSTRAP_COMPLETE` marker and required keys before migration and bootstrap. The worker waits on the same marker, then migrates independently; it has no API dependency.
 
 For Artifact integration, configure:
 
@@ -10,13 +12,6 @@ For Artifact integration, configure:
 
 The chart owns the TLS ConfigMap and sidecar, so Helm upgrades retain them. Changes to TLS configuration trigger a rollout. When rotating externally managed Secret contents, change `configRevision` to restart consumers. The image applies to API, worker, migrate and bootstrap containers together.
 
-The non-secret OrbStack overlay belongs to this repository at `charts/forge-tenant/values-orbstack.yaml`. It configures only the tenant release; Artifact and frontend releases are deployed by their own repositories. Existing integration Secret names refer to the current shared namespace and do not transfer ownership of those Secrets to this chart. Validate and deploy from the root of this repository:
-
-```sh
-helm lint charts/forge-tenant -f charts/forge-tenant/values-orbstack.yaml
-helm upgrade --install forge-tenant charts/forge-tenant \
-  --kube-context orbstack --namespace forge-tenant-split \
-  --reset-values -f charts/forge-tenant/values-orbstack.yaml --wait --timeout 5m
-```
+Current OrbStack deployment uses the `charts/forge` umbrella chart in the sibling `artifact-go` repository, with release and namespace `forge`. That chart owns installation inputs and initializes tenant, web, Artifact/Storage and their credentials together. The standalone OrbStack overlay for the retired environment has been removed; use the parent chart's deployment inputs.
 
 Before the first upgrade from a manually patched installation, back up the tenant database and existing Helm release. The chart runs the selected image's migrate/bootstrap commands, including when earlier manual patches only changed the main container image. Keep database PVCs and Secrets during cleanup of superseded proxy resources.

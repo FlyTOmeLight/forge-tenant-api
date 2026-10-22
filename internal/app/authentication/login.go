@@ -3,6 +3,7 @@ package authentication
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"errors"
 	"io"
 	"net/url"
@@ -55,8 +56,11 @@ func (a *Service) CompleteLogin(ctx context.Context, flow, state, code string) (
 	var uid string
 	e = table.ActiveUserBySubject(ctx, a.DB, a.Config.Casdoor.Issuer, subject).
 		Scan(&uid)
-	if e != nil {
+	if errors.Is(e, sql.ErrNoRows) {
 		return "", "", apperror.New(403, "IDENTITY_NOT_ENROLLED", "此账号尚未在 Forge 中激活")
+	}
+	if e != nil {
+		return "", "", e
 	}
 	session := identity.Token()
 	_, e = table.InsertSession(

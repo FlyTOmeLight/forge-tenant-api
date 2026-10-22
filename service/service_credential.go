@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"time"
 
 	server "github.com/FlyTOmeLight/server-go"
@@ -58,6 +60,26 @@ func ServiceCredentialAdmin(ctx context.Context, output io.Writer, args []string
 	encode := json.NewEncoder(output)
 	encode.SetIndent("", "  ")
 	switch args[0] {
+	case "ensure":
+		if len(args) < 3 || len(args) > 5 {
+			return errors.New("usage: server service-credential ensure SERVICE TOKEN_FILE [NAME] [EXPIRES_AT]")
+		}
+		raw, err := os.ReadFile(args[2])
+		if err != nil {
+			return errors.New("cannot read service credential file")
+		}
+		name, expiry := "default", ""
+		if len(args) > 3 {
+			name = args[3]
+		}
+		if len(args) > 4 {
+			expiry = args[4]
+		}
+		item, err := credentials.EnsureService(operation, args[1], name, strings.TrimSpace(string(raw)), expiry)
+		if err != nil {
+			return err
+		}
+		return encode.Encode(item)
 	case "issue":
 		if len(args) < 2 || len(args) > 4 {
 			return errors.New("usage: server service-credential issue SERVICE [NAME] [EXPIRES_AT]")
