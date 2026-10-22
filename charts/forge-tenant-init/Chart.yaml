@@ -1,0 +1,5 @@
+apiVersion: v2
+name: forge-tenant-init
+version: 0.1.0
+appVersion: "helm-init-20261020"
+description: Forge external identity and credential initialization

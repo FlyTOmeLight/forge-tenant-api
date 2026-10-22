@@ -34,26 +34,26 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 	if err != nil || owner == nil || !owner.IsAdmin || owner.State != "active" {
 		return errors.New("GitLab bootstrap credential must belong to an active administrator")
 	}
-	if existing := state.Data["GITLAB_TOKEN"]; existing != "" {
+	if existing := state.Data[gitLabTokenKey]; existing != "" {
 		valid, err := verifyGitLabToken(ctx, c, existing, owner.ID, transport)
 		if err != nil {
 			return err
 		}
 		if valid != nil {
-			if state.Data["GITLAB_TOKEN_ID"] != "" &&
-				state.Data["GITLAB_TOKEN_ID"] != strconv.FormatInt(valid.ID, 10) {
+			if state.Data[gitLabTokenIDKey] != "" &&
+				state.Data[gitLabTokenIDKey] != strconv.FormatInt(valid.ID, 10) {
 				return errors.New("saved GitLab token ID conflicts with remote identity")
 			}
-			state.Data["GITLAB_TOKEN_ID"] = strconv.FormatInt(valid.ID, 10)
-			state.Data["GITLAB_TOKEN_USER_ID"] = strconv.FormatInt(owner.ID, 10)
-			state.Data["GITLAB_TOKEN_NAME"] = valid.Name
-			state.Data["GITLAB_ISSUE_ATTEMPTS"] = "0"
+			state.Data[gitLabTokenIDKey] = strconv.FormatInt(valid.ID, 10)
+			state.Data[gitLabTokenUserIDKey] = strconv.FormatInt(owner.ID, 10)
+			state.Data[gitLabTokenNameKey] = valid.Name
+			state.Data[gitLabIssueAttemptsKey] = "0"
 			return nil
 		}
 	}
 	// Persist the attempt before issuing. Crashes cannot reset this retry budget.
-	attempts, err := strconv.Atoi(state.Data["GITLAB_ISSUE_ATTEMPTS"])
-	if state.Data["GITLAB_ISSUE_ATTEMPTS"] == "" {
+	attempts, err := strconv.Atoi(state.Data[gitLabIssueAttemptsKey])
+	if state.Data[gitLabIssueAttemptsKey] == "" {
 		attempts = 0
 		err = nil
 	}
@@ -66,26 +66,26 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 			admin,
 			owner.ID,
 			c.GitLabTokenName,
-			"Forge tenant bootstrap namespace="+c.Namespace,
+			gitLabTokenDescription(c.Namespace),
 		); err != nil {
 			return err
 		}
 		attempts++
-		state.Data["GITLAB_ISSUE_ATTEMPTS"] = strconv.Itoa(attempts)
-		state.Data["BOOTSTRAP_COMPLETE"] = "false"
+		state.Data[gitLabIssueAttemptsKey] = strconv.Itoa(attempts)
+		state.Data[CompleteKey] = "false"
 		if err := store.Save(ctx, state); err != nil {
 			return err
 		}
 		expiry, _ := time.Parse("2006-01-02", c.GitLabTokenExpiresAt)
 		date := gitlab.ISOTime(expiry)
-		description := "Forge tenant bootstrap namespace=" + c.Namespace
+		description := gitLabTokenDescription(c.Namespace)
 		// The marker distinguishes this integration from unrelated administrator tokens with the same display name.
 		token, _, err := admin.Users.CreatePersonalAccessToken(
 			owner.ID,
 			&gitlab.CreatePersonalAccessTokenOptions{
 				Name:        &c.GitLabTokenName,
 				Description: &description,
-				Scopes:      gitlab.Ptr([]string{"api"}),
+				Scopes:      gitlab.Ptr([]string{gitLabScope}),
 				ExpiresAt:   &date,
 			},
 			gitlab.WithContext(ctx),
@@ -100,11 +100,11 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 		if verified == nil {
 			return errors.New("new GitLab token is not usable")
 		}
-		state.Data["GITLAB_TOKEN"] = token.Token
-		state.Data["GITLAB_TOKEN_ID"] = strconv.FormatInt(verified.ID, 10)
-		state.Data["GITLAB_TOKEN_USER_ID"] = strconv.FormatInt(owner.ID, 10)
-		state.Data["GITLAB_TOKEN_NAME"] = verified.Name
-		state.Data["GITLAB_ISSUE_ATTEMPTS"] = "0"
+		state.Data[gitLabTokenKey] = token.Token
+		state.Data[gitLabTokenIDKey] = strconv.FormatInt(verified.ID, 10)
+		state.Data[gitLabTokenUserIDKey] = strconv.FormatInt(owner.ID, 10)
+		state.Data[gitLabTokenNameKey] = verified.Name
+		state.Data[gitLabIssueAttemptsKey] = "0"
 		// Save before marking complete. If the response is lost, the next run reads
 		// and validates this token first, so it is reused instead of revoked.
 		return store.Save(ctx, state)
@@ -115,7 +115,7 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 		admin,
 		owner.ID,
 		c.GitLabTokenName,
-		"Forge tenant bootstrap namespace="+c.Namespace,
+		gitLabTokenDescription(c.Namespace),
 	); err != nil {
 		return err
 	}
@@ -141,8 +141,8 @@ func verifyGitLabToken(
 		return nil, errors.New("cannot verify saved GitLab token; refusing uncertain replacement")
 	}
 	if info == nil || info.UserID != ownerID || info.Name != c.GitLabTokenName ||
-		info.Description != "Forge tenant bootstrap namespace="+c.Namespace ||
-		!slices.Contains(info.Scopes, "api") {
+		info.Description != gitLabTokenDescription(c.Namespace) ||
+		!slices.Contains(info.Scopes, gitLabScope) {
 		return nil, errors.New("GitLab token identity or scope conflicts with Forge integration")
 	}
 	if info.Revoked || !info.Active || (info.ExpiresAt != nil && !time.Time(*info.ExpiresAt).After(time.Now())) {

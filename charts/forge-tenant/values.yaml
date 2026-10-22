@@ -2,6 +2,8 @@ fullnameOverride: ""
 global:
   forge:
     enabled: false
+    # The Forge parent supplies the same image to Tenant and its init chart.
+    tenantImage: {}
     publicURL: ""
     storageEndpoint: ""
     external:
@@ -17,8 +19,6 @@ global:
       username: ""
       email: ""
       gitlabTokenExpiresAt: ""
-initialization:
-  timeout: 5m
 image:
   repository: forge-tenant-api
   tag: dev

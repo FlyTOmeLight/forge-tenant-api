@@ -8,6 +8,7 @@
 
 ```text
 cmd/server/               进程入口与 api / worker / migrate / bootstrap 命令
+cmd/init/                 外部身份初始化与凭据投影等待命令
 service/                  公开构造、独立应用装配、HTTP 与 Worker 生命周期
 internal/app/authentication/ 登录、OIDC、会话与当前登录主体
 internal/app/credential/     用户与服务 API key 签发、列表和撤销
@@ -41,9 +42,11 @@ conf/server/            server-go 配置与环境变量占位符
 
 server-go 管理配置快照、HTTPHost 启动与排空、请求 ID、日志、Recovery、严格 JSON 绑定和服务 API key 鉴权。Controller 在 HTTP 边界将领域及框架错误映射为既有 `{error:{code,message}}` 格式。租户幂等结果仍与业务、审计和 outbox 一起写入 PostgreSQL。
 
-默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[DB]` 配置数据库驱动、DSN 和连接池，`[Tenant]` 配置本服务的 `PublicURL`、出站 `CAFile` 和幂等响应加密密钥 `EncryptionKey`（环境变量 `TENANT_ENCRYPTION_KEY`，即原 `APP_KEY`，改名时须沿用原值）；顶层 `[Gitlab]` 集中配置 GitLab API / 浏览器地址、OIDC 客户端和管理凭据，`[Casdoor]` 集中配置身份服务、管理客户端、组织和 Forge OIDC 客户端。bootstrap 命令另读环境变量 `BOOTSTRAP_USERNAME`，不作为常驻服务配置。`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。GitLab API 调用使用官方 `client-go/v3`；Casdoor 管理调用复用官方 `casdoor-go-sdk` 的客户端 URL、用户和响应类型。Casdoor SDK v1.56.0 的用户方法不接收 context，HTTP 客户端为包级全局，因此传输保留实例适配，以支持请求取消及私有 CA。业务配置和日志在启动时读取，调整后重启对应进程；API 的框架配置由 `app.Run` 监听，HTTPHost 支持动态更新的项目按框架规则生效。API 收到退出信号后由 `app.Run` 协调 HTTPHost 排空请求，再停止服务、关闭外部 HTTP 空闲连接和数据库；Worker 取消并完成当前操作的结果持久化后释放资源。
+默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[DB]` 配置数据库驱动、DSN 和连接池，`[Tenant]` 配置本服务的 `PublicURL`、出站 `CAFile` 和幂等响应加密密钥 `EncryptionKey`（环境变量 `TENANT_ENCRYPTION_KEY`，即原 `APP_KEY`，改名时须沿用原值）；顶层 `[Gitlab]` 集中配置 GitLab API / 浏览器地址、OIDC 客户端和管理凭据，`[Casdoor]` 集中配置身份服务、管理客户端、组织和 Forge OIDC 客户端。`[Bootstrap]` 仅供外部初始化使用，包含 `Certificate`、`Username`、`Email`、`GitLabTokenExpiresAt`，对应 `BOOTSTRAP_CERTIFICATE`、`BOOTSTRAP_USERNAME`、`BOOTSTRAP_EMAIL`、`GITLAB_TOKEN_EXPIRES_AT`。常驻服务不要求这些字段；数据库 bootstrap 命令继续读取 `BOOTSTRAP_USERNAME`。`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。GitLab API 调用使用官方 `client-go/v3`；Casdoor 管理调用复用官方 `casdoor-go-sdk` 的客户端 URL、用户和响应类型。Casdoor SDK v1.56.0 的用户方法不接收 context，HTTP 客户端为包级全局，因此传输保留实例适配，以支持请求取消及私有 CA。业务配置和日志在启动时读取，调整后重启对应进程；API 的框架配置由 `app.Run` 监听，HTTPHost 支持动态更新的项目按框架规则生效。API 收到退出信号后由 `app.Run` 协调 HTTPHost 排空请求，再停止服务、关闭外部 HTTP 空闲连接和数据库；Worker 取消并完成当前操作的结果持久化后释放资源。
 
 独立入口使用 `service.Run(ctx, mode)`，API 通过 `app.Run` 统一装配。框架 v0.9.0 不自动读取 `[Log]`，入口装配显式读取并传入 `Options.LogConfig`。Worker 只创建数据库和 GitLab 客户端；migrate 只连接数据库；bootstrap 只创建数据库和 Casdoor 客户端。现有 `/forge api|worker|migrate|bootstrap|gitlab-credential-status` 部署命令保持不变；服务 API key 由 `forge service-credential issue|list|revoke` 维护。
+
+同一镜像另提供 `/forge-init external-bootstrap` 和 `/forge-init wait-external [--directory DIR]`。外部初始化通过 `conf.Load` 加载同一主 TOML，复用 `[Casdoor].URL/Organization`、`[Gitlab].URL`、`[Tenant].PublicURL/CAFile`，只校验自身输入，不要求数据库、Storage 或待生成的 OAuth 凭据。`POD_NAMESPACE` 与 `HELM_RELEASE_NAME` 派生 `<namespace>-<release>-console`、`<namespace>-<release>-management`、`<namespace>-<release>-tenant` 和 `<release>-external-credentials`。管理员输入挂载到 `/bootstrap-admin`，稳定身份 seed 挂载到 `/identity-seed`；等待命令默认读取 `/external` 的原子 Secret 投影。两项操作的时间预算固定为 300 秒，初始化重跑保留既有凭据复用和失败恢复语义。
 
 组合应用导入公开 `service` 包，用 `service.Config{DB: db.Config{...}, Tenant: service.TenantConfig{...}, Gitlab: service.GitlabConfig{...}, Casdoor: service.CasdoorConfig{...}}`（`DB` 为 `server-go/db.Config`）构造配置，调用 `service.NewAPI(ctx, sharedDB, cfg)` 并交给宿主生命周期。配置沿用各 TOML 节的校验规则；`NewAPI` 初始化 OIDC，不执行数据库迁移或平台账号 bootstrap。宿主通过 `service.SetupHTTP` 安装 Forge 响应协议，并负责迁移及共享数据库关闭；不要调用独立 `Build` 重复创建数据库。`NewWorker` 的运行 context 由 `Start` 传入，`Stop` 完成后再关闭借用的数据库。
 
@@ -53,6 +56,7 @@ server-go 管理配置快照、HTTPHost 启动与排空、请求 ID、日志、R
 
 ```sh
 go build -tags=nomsgpack -o bin/forge ./cmd/server
+go build -tags=nomsgpack -o bin/forge-init ./cmd/init
 GIN_MODE=release go test -tags=nomsgpack ./...
 go vet -tags=nomsgpack ./...
 TEST_DATABASE_URL='postgres://user:password@host/database?sslmode=disable' GIN_MODE=release go test -tags=nomsgpack -race -count=1 ./...
@@ -67,7 +71,7 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ## Kubernetes / Helm
 
-配置示例：`configs/env.example`。API 与 Worker 使用同一镜像的不同命令，独立扩缩容。现有数据库与 Casdoor / GitLab 实例沿用，账号和权限数据无需迁移到新数据库。
+主配置及环境变量占位符见 `conf/server/config.toml`。API 与 Worker 使用同一镜像的不同命令，独立扩缩容。现有数据库与 Casdoor / GitLab 实例沿用，账号和权限数据无需迁移到新数据库。
 
 当前本机环境由相邻 `artifact-go` 仓库的 `charts/forge` umbrella chart 统一安装与升级，namespace 和 release 均为 `forge`。父 chart 负责生成和保留凭据、初始化数据库及专用外部身份；升级时复用现有 seed、TLS 和 PVC。安装输入与命令以该 chart 的 README 为准。
 

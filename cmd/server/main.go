@@ -25,12 +25,6 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if mode == "external-bootstrap" {
-		return service.ExternalBootstrap(ctx, os.Args[2:])
-	}
-	if mode == "wait-external" {
-		return service.WaitExternal(ctx, os.Args[2:])
-	}
 	if mode == "bootstrap" {
 		if err := service.LoadExternalEnvironment(os.Getenv("EXTERNAL_SECRET_DIRECTORY")); err != nil {
 			return err

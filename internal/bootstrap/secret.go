@@ -38,7 +38,6 @@ func InClusterStore(namespace, name string) (*SecretStore, error) {
 	if err != nil {
 		return nil, errors.New("cannot load Kubernetes in-cluster configuration")
 	}
-	config.Host = "https://kubernetes.default.svc"
 	client, err := typedcorev1.NewForConfig(config)
 	if err != nil {
 		return nil, errors.New("cannot initialize Kubernetes Secret client")

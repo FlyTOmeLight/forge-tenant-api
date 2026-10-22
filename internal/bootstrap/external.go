@@ -28,17 +28,16 @@ type Config struct {
 	BootstrapUsername, BootstrapEmail                              string
 	GitLabURL, GitLabTokenName, GitLabTokenExpiresAt               string
 	Namespace, OutputSecret, AdminDirectory, SeedDirectory, CAFile string
-	TimeoutSeconds                                                 int
 }
 
 var (
 	RequiredKeys = []string{
-		"CASDOOR_CLIENT_ID",
-		"CASDOOR_SECRET",
-		"OIDC_CLIENT_ID",
-		"OIDC_CLIENT_SECRET",
-		"GITLAB_TOKEN",
-		"BOOTSTRAP_USERNAME",
+		casdoorClientIDKey,
+		casdoorSecretKey,
+		oidcClientIDKey,
+		oidcClientSecretKey,
+		gitLabTokenKey,
+		bootstrapUsernameKey,
 	}
 	stableName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
 )
@@ -66,9 +65,6 @@ func (c Config) Validate() error {
 	expiry, err := time.Parse("2006-01-02", c.GitLabTokenExpiresAt)
 	if err != nil || !expiry.After(time.Now()) || expiry.After(time.Now().Add(365*24*time.Hour)) {
 		return errors.New("GitLabTokenExpiresAt must be a future YYYY-MM-DD within 365 days")
-	}
-	if c.TimeoutSeconds < 1 || c.TimeoutSeconds > 600 {
-		return errors.New("TimeoutSeconds must be 1–600")
 	}
 	return nil
 }
@@ -98,21 +94,23 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	state, err := store.Acquire(ctx, time.Duration(c.TimeoutSeconds)*time.Second+time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
+	state, err := store.Acquire(ctx, Timeout+time.Minute)
 	if err != nil {
 		return err
 	}
 	defer store.Release(context.WithoutCancel(ctx))
 	seed := map[string]string{}
-	for _, key := range []string{"CASDOOR_CLIENT_ID", "CASDOOR_SECRET", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "BOOTSTRAP_PASSWORD"} {
+	for _, key := range []string{casdoorClientIDKey, casdoorSecretKey, oidcClientIDKey, oidcClientSecretKey, bootstrapPasswordKey} {
 		seed[key], err = ReadCredential(c.SeedDirectory, key)
 		if err != nil {
 			return err
 		}
 	}
-	if seed["CASDOOR_CLIENT_ID"] == seed["OIDC_CLIENT_ID"] || len(seed["CASDOOR_SECRET"]) < 32 ||
-		len(seed["OIDC_CLIENT_SECRET"]) < 32 ||
-		len(seed["BOOTSTRAP_PASSWORD"]) < 16 {
+	if seed[casdoorClientIDKey] == seed[oidcClientIDKey] || len(seed[casdoorSecretKey]) < 32 ||
+		len(seed[oidcClientSecretKey]) < 32 ||
+		len(seed[bootstrapPasswordKey]) < 16 {
 		return errors.New("independent client IDs and strong generated secrets are required")
 	}
 	adminID, err := ReadCredential(c.AdminDirectory, "CASDOOR_ADMIN_CLIENT_ID")
@@ -123,7 +121,7 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 	if err != nil {
 		return err
 	}
-	if seed["CASDOOR_CLIENT_ID"] == adminID || seed["OIDC_CLIENT_ID"] == adminID {
+	if seed[casdoorClientIDKey] == adminID || seed[oidcClientIDKey] == adminID {
 		return errors.New("bootstrap clients must be distinct from administrator client")
 	}
 	admin := &client.Casdoor{
@@ -134,8 +132,8 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 		HTTP:         httpClient,
 	}
 	for _, app := range []*casdoorsdk.Application{
-		{Owner: "admin", Name: c.OIDCApplication, DisplayName: c.OIDCApplication, Organization: c.CasdoorOrganization, Cert: c.CasdoorCertificate, ClientId: seed["OIDC_CLIENT_ID"], ClientSecret: seed["OIDC_CLIENT_SECRET"], RedirectUris: []string{strings.TrimRight(c.PublicURL, "/") + "/auth/callback"}, GrantTypes: []string{"authorization_code", "refresh_token"}, EnablePassword: true, EnableSigninSession: true, TokenFormat: "JWT", TokenSigningMethod: "RS256", ExpireInHours: 1, RefreshExpireInHours: 24},
-		{Owner: "admin", Name: c.ManagementApplication, DisplayName: c.ManagementApplication, Organization: c.CasdoorOrganization, Cert: c.CasdoorCertificate, ClientId: seed["CASDOOR_CLIENT_ID"], ClientSecret: seed["CASDOOR_SECRET"], GrantTypes: []string{"client_credentials"}, DisableSignin: true, TokenFormat: "JWT", TokenSigningMethod: "RS256", ExpireInHours: 1},
+		{Owner: "admin", Name: c.OIDCApplication, DisplayName: c.OIDCApplication, Organization: c.CasdoorOrganization, Cert: c.CasdoorCertificate, ClientId: seed[oidcClientIDKey], ClientSecret: seed[oidcClientSecretKey], RedirectUris: []string{strings.TrimRight(c.PublicURL, "/") + "/auth/callback"}, GrantTypes: []string{"authorization_code", "refresh_token"}, EnablePassword: true, EnableSigninSession: true, TokenFormat: "JWT", TokenSigningMethod: "RS256", ExpireInHours: 1, RefreshExpireInHours: 24},
+		{Owner: "admin", Name: c.ManagementApplication, DisplayName: c.ManagementApplication, Organization: c.CasdoorOrganization, Cert: c.CasdoorCertificate, ClientId: seed[casdoorClientIDKey], ClientSecret: seed[casdoorSecretKey], GrantTypes: []string{"client_credentials"}, DisableSignin: true, TokenFormat: "JWT", TokenSigningMethod: "RS256", ExpireInHours: 1},
 	} {
 		if err := ensureApplication(ctx, admin, app); err != nil {
 			return err
@@ -143,8 +141,8 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 	}
 	management := &client.Casdoor{
 		URL:          c.CasdoorURL,
-		ClientID:     seed["CASDOOR_CLIENT_ID"],
-		Secret:       seed["CASDOOR_SECRET"],
+		ClientID:     seed[casdoorClientIDKey],
+		Secret:       seed[casdoorSecretKey],
 		Organization: c.CasdoorOrganization,
 		HTTP:         httpClient,
 	}
@@ -165,7 +163,7 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 		Id:          userID,
 		DisplayName: c.BootstrapUsername,
 		Email:       c.BootstrapEmail,
-		Password:    seed["BOOTSTRAP_PASSWORD"],
+		Password:    seed[bootstrapPasswordKey],
 		Type:        "normal-user",
 	}
 	if existing != nil {
@@ -193,17 +191,17 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 		verified.IsForbidden {
 		return errors.New("Casdoor management user verification failed")
 	}
-	for _, key := range []string{"CASDOOR_CLIENT_ID", "CASDOOR_SECRET", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"} {
+	for _, key := range []string{casdoorClientIDKey, casdoorSecretKey, oidcClientIDKey, oidcClientSecretKey} {
 		if state.Data[key] != "" && state.Data[key] != seed[key] {
 			return errors.New("external credentials conflict with stable identity seed")
 		}
 		state.Data[key] = seed[key]
 	}
-	state.Data["BOOTSTRAP_USERNAME"] = c.BootstrapUsername
+	state.Data[bootstrapUsernameKey] = c.BootstrapUsername
 	if err := ensureGitLab(ctx, c, store, state, httpClient); err != nil {
 		return err
 	}
-	state.Data["BOOTSTRAP_COMPLETE"] = "true"
+	state.Data[CompleteKey] = "true"
 	return store.Save(ctx, state)
 }
 

@@ -1,0 +1,18 @@
+# Public render-only fixture. This Secret need not exist for lint/template.
+existingSecret: bootstrap-admin-fixture
+global:
+  forge:
+    tenantImage:
+      repository: forge-tenant-api
+      tag: forge-review-20261022-init
+      pullPolicy: IfNotPresent
+    publicURL: https://forge.example.test
+    external:
+      casdoorURL: https://casdoor.example.test
+      organization: forge-test
+      certificate: cert-fixture
+      gitlabURL: https://gitlab.example.test
+    bootstrap:
+      username: fixture-admin
+      email: fixture-admin@example.test
+      gitlabTokenExpiresAt: "2030-01-01"

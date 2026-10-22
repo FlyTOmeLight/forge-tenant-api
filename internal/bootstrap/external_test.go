@@ -77,7 +77,6 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		OutputSecret:          "forge-external",
 		AdminDirectory:        admin,
 		SeedDirectory:         seed,
-		TimeoutSeconds:        30,
 	}
 	kube, err := typedcorev1.NewForConfig(&rest.Config{
 		Host:        f.server.URL,

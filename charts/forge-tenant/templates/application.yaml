@@ -1,3 +1,9 @@
+{{- $image := .Values.image -}}
+{{- if .Values.global.forge.enabled -}}
+{{- $image = required "global.forge.tenantImage is required" .Values.global.forge.tenantImage -}}
+{{- $_ := required "global.forge.tenantImage.repository is required" $image.repository -}}
+{{- $_ := required "global.forge.tenantImage.tag is required" $image.tag -}}
+{{- end -}}
 {{- range $mode := list "api" "worker" }}
 apiVersion: apps/v1
 kind: Deployment
@@ -25,29 +31,30 @@ spec:
       initContainers:
         {{- if $.Values.global.forge.enabled }}
         - name: wait-external
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
-          args: [wait-external, --directory, /external, --timeout, {{ $.Values.initialization.timeout | quote }}]
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          command: [/forge-init]
+          args: [wait-external, --directory, /external]
           volumeMounts: [{name: external, mountPath: /external, readOnly: true}]
         {{- end }}
         - name: migrate
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
           args: [migrate]
           envFrom: [{secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}}]
           volumeMounts: [{name: ca, mountPath: {{ include "forge-tenant.caMount" $ }}, readOnly: true}]
         {{- if eq $mode "api" }}
         {{- if $.Values.global.forge.enabled }}
         - name: artifact-service-key
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
           args: [service-credential, ensure, artifact, /service-key/TENANT_SERVICE_TOKEN, artifact]
           envFrom: [{secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}}]
           volumeMounts: [{name: service-key, mountPath: /service-key, readOnly: true}, {name: ca, mountPath: /tls, readOnly: true}]
         {{- end }}
         - name: bootstrap
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
           args: [bootstrap]
           envFrom: [{secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}}]
           {{- if $.Values.global.forge.enabled }}
@@ -61,8 +68,8 @@ spec:
         {{- end }}
       containers:
         - name: {{ $mode }}
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
           args: [{{ $mode }}]
           envFrom:
             - secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}
