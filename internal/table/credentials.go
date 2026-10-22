@@ -37,6 +37,12 @@ func InsertCredential(
 	return result.RowsAffected, result.Error
 }
 
+func CredentialByID(ctx context.Context, db *gorm.DB, id string) (Credential, error) {
+	var row Credential
+	err := db.WithContext(ctx).Where("id=?", id).Take(&row).Error
+	return row, err
+}
+
 // CredentialsForEnsure serializes bootstrap registration within the caller's transaction.
 func CredentialsForEnsure(ctx context.Context, tx *gorm.DB, service, name, hash string) ([]Credential, error) {
 	if err := tx.WithContext(ctx).

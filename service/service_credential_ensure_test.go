@@ -76,6 +76,34 @@ func TestEnsureServiceCredentialPostgres(t *testing.T) {
 	}
 }
 
+func TestEnsureServiceCredentialPersistedMetadataPostgres(t *testing.T) {
+	f := setup(t)
+	svc := credential.New(f.a.DB)
+	token := serviceToken(t)
+	expiry := time.Now().UTC().Add(time.Hour).Truncate(time.Second).Add(123456789 * time.Nanosecond)
+	first, err := svc.EnsureService(f.ctx, "artifact", "precise", token, expiry.Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := svc.EnsureService(f.ctx, "artifact", "precise", token, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := table.ListServiceCredentials(f.ctx, f.a.DB, "artifact")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("persisted credentials: count=%d err=%v", len(rows), err)
+	}
+	stored := rows[0]
+	for _, item := range []credential.Metadata{first, again} {
+		if item.ID != stored.ID || !item.CreatedAt.Equal(stored.CreatedAt) ||
+			!item.ExpiresAt.Equal(stored.ExpiresAt) {
+			t.Fatalf("returned metadata differs from persisted row: created=%s/%s expires=%s/%s",
+				item.CreatedAt.Format(time.RFC3339Nano), stored.CreatedAt.Format(time.RFC3339Nano),
+				item.ExpiresAt.Format(time.RFC3339Nano), stored.ExpiresAt.Format(time.RFC3339Nano))
+		}
+	}
+}
+
 func TestEnsureServiceCredentialConcurrentPostgres(t *testing.T) {
 	f := setup(t)
 	svc := credential.New(f.a.DB)

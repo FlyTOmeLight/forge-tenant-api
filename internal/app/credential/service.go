@@ -174,13 +174,11 @@ func (a *Service) EnsureService(ctx context.Context, service, name, token, expir
 		); err != nil {
 			return err
 		}
-		result = Metadata{
-			ID:          id,
-			Name:        name,
-			CreatedAt:   time.Now().UTC(),
-			ExpiresAt:   expiresAt,
-			ServiceName: service,
+		row, err := table.CredentialByID(ctx, tx, id)
+		if err != nil {
+			return err
 		}
+		result = metadata(row)
 		return nil
 	})
 	return result, err
