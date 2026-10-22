@@ -18,8 +18,10 @@ import (
 	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 )
 
-const leaseKey = "forge.io/bootstrap-lease"
-const leaseUntilKey = "forge.io/bootstrap-lease-until"
+const (
+	leaseKey      = "forge.io/bootstrap-lease"
+	leaseUntilKey = "forge.io/bootstrap-lease-until"
+)
 
 type SecretState struct {
 	Metadata struct {
@@ -46,7 +48,15 @@ func InClusterStore(namespace, name string) (*SecretStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SecretStore{HTTP: transport, URL: "https://" + host + ":" + port + "/api/v1/namespaces/" + url.PathEscape(namespace) + "/secrets/" + url.PathEscape(name), TokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"}, nil
+	return &SecretStore{
+		HTTP: transport,
+		URL: "https://" + host + ":" + port + "/api/v1/namespaces/" + url.PathEscape(
+			namespace,
+		) + "/secrets/" + url.PathEscape(
+			name,
+		),
+		TokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+	}, nil
 }
 
 func (s *SecretStore) request(ctx context.Context, method string, body any) (*SecretState, error) {
@@ -111,7 +121,15 @@ func (s *SecretStore) Acquire(ctx context.Context, duration time.Duration) (*Sec
 		return nil, err
 	}
 	s.holder = hex.EncodeToString(random)
-	body := map[string]any{"metadata": map[string]any{"resourceVersion": state.Metadata.ResourceVersion, "annotations": map[string]string{leaseKey: s.holder, leaseUntilKey: time.Now().Add(duration).UTC().Format(time.RFC3339)}}}
+	body := map[string]any{
+		"metadata": map[string]any{
+			"resourceVersion": state.Metadata.ResourceVersion,
+			"annotations": map[string]string{
+				leaseKey:      s.holder,
+				leaseUntilKey: time.Now().Add(duration).UTC().Format(time.RFC3339),
+			},
+		},
+	}
 	result, err := s.request(ctx, http.MethodPatch, body)
 	if err != nil {
 		// A response can be lost after the compare-and-swap succeeded.
@@ -128,7 +146,14 @@ func (s *SecretStore) Save(ctx context.Context, state *SecretState) error {
 	for key, value := range state.Data {
 		encoded[key] = base64.StdEncoding.EncodeToString([]byte(value))
 	}
-	result, err := s.request(ctx, http.MethodPatch, map[string]any{"metadata": map[string]any{"resourceVersion": state.Metadata.ResourceVersion}, "data": encoded})
+	result, err := s.request(
+		ctx,
+		http.MethodPatch,
+		map[string]any{
+			"metadata": map[string]any{"resourceVersion": state.Metadata.ResourceVersion},
+			"data":     encoded,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -143,5 +168,14 @@ func (s *SecretStore) Release(ctx context.Context) {
 	if err != nil || state.Metadata.Annotations[leaseKey] != s.holder {
 		return
 	}
-	_, _ = s.request(ctx, http.MethodPatch, map[string]any{"metadata": map[string]any{"resourceVersion": state.Metadata.ResourceVersion, "annotations": map[string]any{leaseKey: nil, leaseUntilKey: nil}}})
+	_, _ = s.request(
+		ctx,
+		http.MethodPatch,
+		map[string]any{
+			"metadata": map[string]any{
+				"resourceVersion": state.Metadata.ResourceVersion,
+				"annotations":     map[string]any{leaseKey: nil, leaseUntilKey: nil},
+			},
+		},
+	)
 }

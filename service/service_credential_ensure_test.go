@@ -39,11 +39,11 @@ func TestEnsureServiceCredentialPostgres(t *testing.T) {
 		t.Fatalf("registered token cannot authenticate: %v", err)
 	}
 	for _, tc := range []struct{ name, service, credentialName, token string }{
-		{"different token", "artifact", "helm", serviceToken(t)},
-		{"different service", "other-service", "helm", token},
-		{"different name", "artifact", "different", token},
-		{"malformed", "artifact", "helm", "bad-token"},
-		{"user credential", "artifact", "user-key", f.a.userKey},
+		{name: "different token", service: "artifact", credentialName: "helm", token: serviceToken(t)},
+		{name: "different service", service: "other-service", credentialName: "helm", token: token},
+		{name: "different name", service: "artifact", credentialName: "different", token: token},
+		{name: "malformed", service: "artifact", credentialName: "helm", token: "bad-token"},
+		{name: "user credential", service: "artifact", credentialName: "user-key", token: f.a.userKey},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := svc.EnsureService(f.ctx, tc.service, tc.credentialName, tc.token, ""); err == nil {
@@ -58,7 +58,17 @@ func TestEnsureServiceCredentialPostgres(t *testing.T) {
 		t.Fatal("revoked credential resurrected")
 	}
 	expired := serviceToken(t)
-	if _, err := table.InsertCredential(f.ctx, f.a.DB, identity.ID("cr"), "service", "", "artifact", "expired", identity.Hash(expired), time.Now().Add(-time.Hour)); err != nil {
+	if _, err := table.InsertCredential(
+		f.ctx,
+		f.a.DB,
+		identity.ID("cr"),
+		"service",
+		"",
+		"artifact",
+		"expired",
+		identity.Hash(expired),
+		time.Now().Add(-time.Hour),
+	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.EnsureService(f.ctx, "artifact", "expired", expired, ""); err == nil {
@@ -97,7 +107,11 @@ func TestEnsureServiceCredentialConcurrentPostgres(t *testing.T) {
 		id = got
 	}
 	var count int64
-	if err := f.a.DB.Model(&table.Credential{}).Where("secret_hash=?", identity.Hash(token)).Count(&count).Error; err != nil || count != 1 {
+	if err := f.a.DB.Model(&table.Credential{}).
+		Where("secret_hash=?", identity.Hash(token)).
+		Count(&count).
+		Error; err != nil ||
+		count != 1 {
 		t.Fatalf("credential count %d: %v", count, err)
 	}
 }

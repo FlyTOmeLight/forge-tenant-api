@@ -38,26 +38,54 @@ type bootstrapFixture struct {
 
 func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 	t.Helper()
-	f := &bootstrapFixture{secret: map[string]string{}, annotations: map[string]string{}, version: 1, apps: map[string]*casdoorsdk.Application{}, tokens: map[int]string{}, next: 10}
+	f := &bootstrapFixture{
+		secret:      map[string]string{},
+		annotations: map[string]string{},
+		version:     1,
+		apps:        map[string]*casdoorsdk.Application{},
+		tokens:      map[int]string{},
+		next:        10,
+	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)
 	admin, seed := t.TempDir(), t.TempDir()
 	for key, value := range map[string]string{"CASDOOR_ADMIN_CLIENT_ID": "external-admin", "CASDOOR_ADMIN_CLIENT_SECRET": "external-admin-secret", "GITLAB_ADMIN_TOKEN": "external-admin-token"} {
-		if err := os.WriteFile(filepath.Join(admin, key), []byte(value), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(admin, key), []byte(value), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for key, value := range map[string]string{"CASDOOR_CLIENT_ID": "forge-management-id", "CASDOOR_SECRET": strings.Repeat("m", 32), "OIDC_CLIENT_ID": "forge-oidc-id", "OIDC_CLIENT_SECRET": strings.Repeat("o", 32), "BOOTSTRAP_PASSWORD": strings.Repeat("p", 24)} {
-		if err := os.WriteFile(filepath.Join(seed, key), []byte(value), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(seed, key), []byte(value), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	f.config = Config{CasdoorURL: f.server.URL, CasdoorOrganization: "forge-org", CasdoorCertificate: "cert-existing", OIDCApplication: "forge-oidc", ManagementApplication: "forge-management", PublicURL: "https://forge.test", BootstrapUsername: "forge-admin", BootstrapEmail: "forge@example.test", GitLabURL: f.server.URL, GitLabTokenName: "forge-tenant", GitLabTokenExpiresAt: time.Now().Add(90 * 24 * time.Hour).Format("2006-01-02"), Namespace: "forge", OutputSecret: "forge-external", AdminDirectory: admin, SeedDirectory: seed, TimeoutSeconds: 30}
+	f.config = Config{
+		CasdoorURL:            f.server.URL,
+		CasdoorOrganization:   "forge-org",
+		CasdoorCertificate:    "cert-existing",
+		OIDCApplication:       "forge-oidc",
+		ManagementApplication: "forge-management",
+		PublicURL:             "https://forge.test",
+		BootstrapUsername:     "forge-admin",
+		BootstrapEmail:        "forge@example.test",
+		GitLabURL:             f.server.URL,
+		GitLabTokenName:       "forge-tenant",
+		GitLabTokenExpiresAt:  time.Now().Add(90 * 24 * time.Hour).Format("2006-01-02"),
+		Namespace:             "forge",
+		OutputSecret:          "forge-external",
+		AdminDirectory:        admin,
+		SeedDirectory:         seed,
+		TimeoutSeconds:        30,
+	}
 	sa := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(sa, []byte("kubernetes-sa"), 0600); err != nil {
+	if err := os.WriteFile(sa, []byte("kubernetes-sa"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f.store = &SecretStore{HTTP: f.server.Client(), URL: f.server.URL + "/api/v1/namespaces/forge/secrets/forge-external", TokenFile: sa}
+	f.store = &SecretStore{
+		HTTP:      f.server.Client(),
+		URL:       f.server.URL + "/api/v1/namespaces/forge/secrets/forge-external",
+		TokenFile: sa,
+	}
 	return f
 }
 
@@ -113,7 +141,15 @@ func (f *bootstrapFixture) serve(w http.ResponseWriter, r *http.Request) {
 		for k, v := range f.secret {
 			data[k] = base64.StdEncoding.EncodeToString([]byte(v))
 		}
-		emit(map[string]any{"metadata": map[string]any{"resourceVersion": strconv.Itoa(f.version), "annotations": f.annotations}, "data": data})
+		emit(
+			map[string]any{
+				"metadata": map[string]any{
+					"resourceVersion": strconv.Itoa(f.version),
+					"annotations":     f.annotations,
+				},
+				"data": data,
+			},
+		)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v4/") {
@@ -191,8 +227,19 @@ func (f *bootstrapFixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	emit(map[string]any{"status": "ok", "data": data})
 }
+
 func (f *bootstrapFixture) tokenInfo(id int) any {
-	return map[string]any{"id": id, "name": "forge-tenant", "user_id": 7, "scopes": []string{"api"}, "active": true, "revoked": false, "expires_at": f.config.GitLabTokenExpiresAt, "token": f.tokens[id], "description": "Forge tenant bootstrap namespace=" + f.config.Namespace}
+	return map[string]any{
+		"id":          id,
+		"name":        "forge-tenant",
+		"user_id":     7,
+		"scopes":      []string{"api"},
+		"active":      true,
+		"revoked":     false,
+		"expires_at":  f.config.GitLabTokenExpiresAt,
+		"token":       f.tokens[id],
+		"description": "Forge tenant bootstrap namespace=" + f.config.Namespace,
+	}
 }
 
 func TestExternalBootstrapFirstAndRepeat(t *testing.T) {
@@ -214,8 +261,8 @@ func TestExternalBootstrapRejectsClientSecretDrift(t *testing.T) {
 	for _, tc := range []struct {
 		name, application, key string
 	}{
-		{"oidc", "forge-oidc", "OIDC_CLIENT_SECRET"},
-		{"management", "forge-management", "CASDOOR_SECRET"},
+		{name: "oidc", application: "forge-oidc", key: "OIDC_CLIENT_SECRET"},
+		{name: "management", application: "forge-management", key: "CASDOOR_SECRET"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBootstrapFixture(t)
@@ -258,7 +305,12 @@ func TestExternalBootstrapRecoversAmbiguousIssuance(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f.issued != 2 || f.revoked != 1 || len(f.tokens) != 1 {
-		t.Fatalf("orphan reconciliation failed issued=%d revoked=%d live=%d", f.issued, f.revoked, len(f.tokens))
+		t.Fatalf(
+			"orphan reconciliation failed issued=%d revoked=%d live=%d",
+			f.issued,
+			f.revoked,
+			len(f.tokens),
+		)
 	}
 }
 

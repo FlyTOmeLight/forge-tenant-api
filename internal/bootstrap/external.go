@@ -16,8 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+
+	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
 )
 
 // Config contains public parameters and mounted file paths, never credentials.
@@ -30,8 +31,17 @@ type Config struct {
 	TimeoutSeconds                                                 int
 }
 
-var RequiredKeys = []string{"CASDOOR_CLIENT_ID", "CASDOOR_SECRET", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "GITLAB_TOKEN", "BOOTSTRAP_USERNAME"}
-var stableName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
+var (
+	RequiredKeys = []string{
+		"CASDOOR_CLIENT_ID",
+		"CASDOOR_SECRET",
+		"OIDC_CLIENT_ID",
+		"OIDC_CLIENT_SECRET",
+		"GITLAB_TOKEN",
+		"BOOTSTRAP_USERNAME",
+	}
+	stableName = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
+)
 
 func (c Config) Validate() error {
 	for _, value := range []string{c.Namespace, c.OutputSecret, c.CasdoorOrganization, c.OIDCApplication, c.ManagementApplication, c.BootstrapUsername, c.GitLabTokenName} {
@@ -100,7 +110,9 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 			return err
 		}
 	}
-	if seed["CASDOOR_CLIENT_ID"] == seed["OIDC_CLIENT_ID"] || len(seed["CASDOOR_SECRET"]) < 32 || len(seed["OIDC_CLIENT_SECRET"]) < 32 || len(seed["BOOTSTRAP_PASSWORD"]) < 16 {
+	if seed["CASDOOR_CLIENT_ID"] == seed["OIDC_CLIENT_ID"] || len(seed["CASDOOR_SECRET"]) < 32 ||
+		len(seed["OIDC_CLIENT_SECRET"]) < 32 ||
+		len(seed["BOOTSTRAP_PASSWORD"]) < 16 {
 		return errors.New("independent client IDs and strong generated secrets are required")
 	}
 	adminID, err := ReadCredential(c.AdminDirectory, "CASDOOR_ADMIN_CLIENT_ID")
@@ -114,7 +126,13 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 	if seed["CASDOOR_CLIENT_ID"] == adminID || seed["OIDC_CLIENT_ID"] == adminID {
 		return errors.New("bootstrap clients must be distinct from administrator client")
 	}
-	admin := &client.Casdoor{URL: c.CasdoorURL, ClientID: adminID, Secret: adminSecret, Organization: c.CasdoorOrganization, HTTP: httpClient}
+	admin := &client.Casdoor{
+		URL:          c.CasdoorURL,
+		ClientID:     adminID,
+		Secret:       adminSecret,
+		Organization: c.CasdoorOrganization,
+		HTTP:         httpClient,
+	}
 	for _, app := range []*casdoorsdk.Application{
 		{Owner: "admin", Name: c.OIDCApplication, DisplayName: c.OIDCApplication, Organization: c.CasdoorOrganization, Cert: c.CasdoorCertificate, ClientId: seed["OIDC_CLIENT_ID"], ClientSecret: seed["OIDC_CLIENT_SECRET"], RedirectUris: []string{strings.TrimRight(c.PublicURL, "/") + "/auth/callback"}, GrantTypes: []string{"authorization_code", "refresh_token"}, EnablePassword: true, EnableSigninSession: true, TokenFormat: "JWT", TokenSigningMethod: "RS256", ExpireInHours: 1, RefreshExpireInHours: 24},
 		{Owner: "admin", Name: c.ManagementApplication, DisplayName: c.ManagementApplication, Organization: c.CasdoorOrganization, Cert: c.CasdoorCertificate, ClientId: seed["CASDOOR_CLIENT_ID"], ClientSecret: seed["CASDOOR_SECRET"], GrantTypes: []string{"client_credentials"}, DisableSignin: true, TokenFormat: "JWT", TokenSigningMethod: "RS256", ExpireInHours: 1},
@@ -123,19 +141,37 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 			return err
 		}
 	}
-	management := &client.Casdoor{URL: c.CasdoorURL, ClientID: seed["CASDOOR_CLIENT_ID"], Secret: seed["CASDOOR_SECRET"], Organization: c.CasdoorOrganization, HTTP: httpClient}
+	management := &client.Casdoor{
+		URL:          c.CasdoorURL,
+		ClientID:     seed["CASDOOR_CLIENT_ID"],
+		Secret:       seed["CASDOOR_SECRET"],
+		Organization: c.CasdoorOrganization,
+		HTTP:         httpClient,
+	}
 	// Creating (or re-submitting) our exact user through the new management client
 	// proves write authorization even when a prior run created the user already.
-	digest := sha256.Sum256([]byte(c.CasdoorOrganization + "/" + c.ManagementApplication + "/" + c.BootstrapUsername))
+	digest := sha256.Sum256(
+		[]byte(c.CasdoorOrganization + "/" + c.ManagementApplication + "/" + c.BootstrapUsername),
+	)
 	userID := hex.EncodeToString(digest[:16])
 	query := url.Values{"id": {c.CasdoorOrganization + "/" + c.BootstrapUsername}}
 	var existing *casdoorsdk.User
 	if err := management.Call(ctx, "get-user", query, nil, &existing); err != nil {
 		return errors.New("new Casdoor management client cannot query users")
 	}
-	user := &casdoorsdk.User{Owner: c.CasdoorOrganization, Name: c.BootstrapUsername, Id: userID, DisplayName: c.BootstrapUsername, Email: c.BootstrapEmail, Password: seed["BOOTSTRAP_PASSWORD"], Type: "normal-user"}
+	user := &casdoorsdk.User{
+		Owner:       c.CasdoorOrganization,
+		Name:        c.BootstrapUsername,
+		Id:          userID,
+		DisplayName: c.BootstrapUsername,
+		Email:       c.BootstrapEmail,
+		Password:    seed["BOOTSTRAP_PASSWORD"],
+		Type:        "normal-user",
+	}
 	if existing != nil {
-		if existing.Id != userID || existing.Owner != user.Owner || existing.Email != user.Email || existing.IsForbidden || existing.IsDeleted {
+		if existing.Id != userID || existing.Owner != user.Owner || existing.Email != user.Email ||
+			existing.IsForbidden ||
+			existing.IsDeleted {
 			return errors.New("bootstrap user identity conflicts or is disabled")
 		}
 		// add-user uses the official API and checks authorization before detecting duplicates.
@@ -147,7 +183,14 @@ func Run(ctx context.Context, c Config, store *SecretStore, httpClient *http.Cli
 		return errors.New("new Casdoor management client cannot create Forge user")
 	}
 	var verified *casdoorsdk.User
-	if err := management.Call(ctx, "get-user", query, nil, &verified); err != nil || verified == nil || verified.Id != userID || verified.IsForbidden {
+	if err := management.Call(
+		ctx,
+		"get-user",
+		query,
+		nil,
+		&verified,
+	); err != nil || verified == nil || verified.Id != userID ||
+		verified.IsForbidden {
 		return errors.New("Casdoor management user verification failed")
 	}
 	for _, key := range []string{"CASDOOR_CLIENT_ID", "CASDOOR_SECRET", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"} {
@@ -178,7 +221,16 @@ func ensureApplication(ctx context.Context, admin *client.Casdoor, wanted *casdo
 			return errors.New("cannot verify Casdoor application")
 		}
 	}
-	if existing == nil || existing.Owner != wanted.Owner || existing.Organization != wanted.Organization || existing.ClientId != wanted.ClientId || existing.ClientSecret != wanted.ClientSecret || existing.Cert != wanted.Cert || !slices.Equal(existing.RedirectUris, wanted.RedirectUris) || !slices.Equal(existing.GrantTypes, wanted.GrantTypes) || existing.TokenFormat != wanted.TokenFormat || existing.TokenSigningMethod != wanted.TokenSigningMethod || existing.DisableSignin != wanted.DisableSignin || existing.EnablePassword != wanted.EnablePassword {
+	if existing == nil || existing.Owner != wanted.Owner || existing.Organization != wanted.Organization ||
+		existing.ClientId != wanted.ClientId ||
+		existing.ClientSecret != wanted.ClientSecret ||
+		existing.Cert != wanted.Cert ||
+		!slices.Equal(existing.RedirectUris, wanted.RedirectUris) ||
+		!slices.Equal(existing.GrantTypes, wanted.GrantTypes) ||
+		existing.TokenFormat != wanted.TokenFormat ||
+		existing.TokenSigningMethod != wanted.TokenSigningMethod ||
+		existing.DisableSignin != wanted.DisableSignin ||
+		existing.EnablePassword != wanted.EnablePassword {
 		return errors.New("Casdoor application conflicts with dedicated Forge configuration")
 	}
 	return nil

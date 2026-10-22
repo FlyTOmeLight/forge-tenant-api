@@ -135,11 +135,21 @@ func (a *Service) EnsureService(ctx context.Context, service, name, token, expir
 			return err
 		}
 		for _, row := range rows {
-			if row.SecretHash != hash || row.OwnerKind != "service" || row.ServiceName == nil || *row.ServiceName != service || row.Name != name {
-				return apperror.New(409, "CREDENTIAL_CONFLICT", "credential token or owner conflicts with existing registration")
+			if row.SecretHash != hash || row.OwnerKind != "service" || row.ServiceName == nil ||
+				*row.ServiceName != service ||
+				row.Name != name {
+				return apperror.New(
+					409,
+					"CREDENTIAL_CONFLICT",
+					"credential token or owner conflicts with existing registration",
+				)
 			}
 			if row.RevokedAt != nil || !row.ExpiresAt.After(time.Now()) {
-				return apperror.New(409, "CREDENTIAL_INACTIVE", "registered credential is revoked or expired")
+				return apperror.New(
+					409,
+					"CREDENTIAL_INACTIVE",
+					"registered credential is revoked or expired",
+				)
 			}
 			result = metadata(row)
 		}
@@ -151,10 +161,26 @@ func (a *Service) EnsureService(ctx context.Context, service, name, token, expir
 			return err
 		}
 		id := identity.ID("cr")
-		if _, err := table.InsertCredential(ctx, tx, id, "service", "", service, name, hash, expiresAt); err != nil {
+		if _, err := table.InsertCredential(
+			ctx,
+			tx,
+			id,
+			"service",
+			"",
+			service,
+			name,
+			hash,
+			expiresAt,
+		); err != nil {
 			return err
 		}
-		result = Metadata{ID: id, Name: name, CreatedAt: time.Now().UTC(), ExpiresAt: expiresAt, ServiceName: service}
+		result = Metadata{
+			ID:          id,
+			Name:        name,
+			CreatedAt:   time.Now().UTC(),
+			ExpiresAt:   expiresAt,
+			ServiceName: service,
+		}
 		return nil
 	})
 	return result, err

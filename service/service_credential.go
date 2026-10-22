@@ -62,7 +62,9 @@ func ServiceCredentialAdmin(ctx context.Context, output io.Writer, args []string
 	switch args[0] {
 	case "ensure":
 		if len(args) < 3 || len(args) > 5 {
-			return errors.New("usage: server service-credential ensure SERVICE TOKEN_FILE [NAME] [EXPIRES_AT]")
+			return errors.New(
+				"usage: server service-credential ensure SERVICE TOKEN_FILE [NAME] [EXPIRES_AT]",
+			)
 		}
 		raw, err := os.ReadFile(args[2])
 		if err != nil {

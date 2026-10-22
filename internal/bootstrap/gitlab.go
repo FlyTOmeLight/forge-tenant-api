@@ -13,7 +13,12 @@ import (
 
 func gitLabSDK(c Config, token string, transport *http.Client) (*gitlab.Client, error) {
 	// Mutations are retried only by our stable-name reconciliation, never by HTTP.
-	return gitlab.NewClient(token, gitlab.WithBaseURL(c.GitLabURL+"/api/v4"), gitlab.WithHTTPClient(transport), gitlab.WithCustomRetryMax(0))
+	return gitlab.NewClient(
+		token,
+		gitlab.WithBaseURL(c.GitLabURL+"/api/v4"),
+		gitlab.WithHTTPClient(transport),
+		gitlab.WithCustomRetryMax(0),
+	)
 }
 
 func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *SecretState, transport *http.Client) error {
@@ -35,7 +40,8 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 			return err
 		}
 		if valid != nil {
-			if state.Data["GITLAB_TOKEN_ID"] != "" && state.Data["GITLAB_TOKEN_ID"] != strconv.FormatInt(valid.ID, 10) {
+			if state.Data["GITLAB_TOKEN_ID"] != "" &&
+				state.Data["GITLAB_TOKEN_ID"] != strconv.FormatInt(valid.ID, 10) {
 				return errors.New("saved GitLab token ID conflicts with remote identity")
 			}
 			state.Data["GITLAB_TOKEN_ID"] = strconv.FormatInt(valid.ID, 10)
@@ -54,7 +60,13 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 		return errors.New("invalid GitLab issuance attempt state")
 	}
 	for attempts < 3 {
-		if err := revokeOrphans(ctx, admin, owner.ID, c.GitLabTokenName, "Forge tenant bootstrap namespace="+c.Namespace); err != nil {
+		if err := revokeOrphans(
+			ctx,
+			admin,
+			owner.ID,
+			c.GitLabTokenName,
+			"Forge tenant bootstrap namespace="+c.Namespace,
+		); err != nil {
 			return err
 		}
 		attempts++
@@ -67,7 +79,16 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 		date := gitlab.ISOTime(expiry)
 		description := "Forge tenant bootstrap namespace=" + c.Namespace
 		// The marker distinguishes this integration from unrelated administrator tokens with the same display name.
-		token, _, err := admin.Users.CreatePersonalAccessToken(owner.ID, &gitlab.CreatePersonalAccessTokenOptions{Name: &c.GitLabTokenName, Description: &description, Scopes: gitlab.Ptr([]string{"api"}), ExpiresAt: &date}, gitlab.WithContext(ctx))
+		token, _, err := admin.Users.CreatePersonalAccessToken(
+			owner.ID,
+			&gitlab.CreatePersonalAccessTokenOptions{
+				Name:        &c.GitLabTokenName,
+				Description: &description,
+				Scopes:      gitlab.Ptr([]string{"api"}),
+				ExpiresAt:   &date,
+			},
+			gitlab.WithContext(ctx),
+		)
 		if err != nil || token == nil || token.Token == "" {
 			continue
 		}
@@ -87,13 +108,25 @@ func ensureGitLab(ctx context.Context, c Config, store *SecretStore, state *Secr
 		return store.Save(ctx, state)
 	}
 	// The last ambiguous request may have created one token; reconcile it as well.
-	if err := revokeOrphans(ctx, admin, owner.ID, c.GitLabTokenName, "Forge tenant bootstrap namespace="+c.Namespace); err != nil {
+	if err := revokeOrphans(
+		ctx,
+		admin,
+		owner.ID,
+		c.GitLabTokenName,
+		"Forge tenant bootstrap namespace="+c.Namespace,
+	); err != nil {
 		return err
 	}
 	return errors.New("GitLab token issuance failed after three attempts; matching orphan tokens revoked")
 }
 
-func verifyGitLabToken(ctx context.Context, c Config, token string, ownerID int64, transport *http.Client) (*gitlab.PersonalAccessToken, error) {
+func verifyGitLabToken(
+	ctx context.Context,
+	c Config,
+	token string,
+	ownerID int64,
+	transport *http.Client,
+) (*gitlab.PersonalAccessToken, error) {
 	sdk, err := gitLabSDK(c, token, transport)
 	if err != nil {
 		return nil, errors.New("cannot initialize GitLab SDK")
@@ -105,7 +138,9 @@ func verifyGitLabToken(ctx context.Context, c Config, token string, ownerID int6
 		}
 		return nil, errors.New("cannot verify saved GitLab token; refusing uncertain replacement")
 	}
-	if info == nil || info.UserID != ownerID || info.Name != c.GitLabTokenName || info.Description != "Forge tenant bootstrap namespace="+c.Namespace || !slices.Contains(info.Scopes, "api") {
+	if info == nil || info.UserID != ownerID || info.Name != c.GitLabTokenName ||
+		info.Description != "Forge tenant bootstrap namespace="+c.Namespace ||
+		!slices.Contains(info.Scopes, "api") {
 		return nil, errors.New("GitLab token identity or scope conflicts with Forge integration")
 	}
 	if info.Revoked || !info.Active || (info.ExpiresAt != nil && !time.Time(*info.ExpiresAt).After(time.Now())) {
@@ -123,14 +158,22 @@ func revokeOrphans(ctx context.Context, admin *gitlab.Client, userID int64, name
 	var ids []int64
 	// GitLab permits a PAT to list only its owner's tokens. The bootstrap token
 	// is validated against the active admin identity before this reconciliation.
-	options := &gitlab.ListPersonalAccessTokensOptions{ListOptions: gitlab.ListOptions{Page: 1, PerPage: 100}, Search: &name, Revoked: gitlab.Ptr(false)}
+	options := &gitlab.ListPersonalAccessTokensOptions{
+		ListOptions: gitlab.ListOptions{Page: 1, PerPage: 100},
+		Search:      &name,
+		Revoked:     gitlab.Ptr(false),
+	}
 	for {
-		tokens, response, err := admin.PersonalAccessTokens.ListPersonalAccessTokens(options, gitlab.WithContext(ctx))
+		tokens, response, err := admin.PersonalAccessTokens.ListPersonalAccessTokens(
+			options,
+			gitlab.WithContext(ctx),
+		)
 		if err != nil {
 			return errors.New("cannot list GitLab bootstrap orphan tokens")
 		}
 		for _, token := range tokens {
-			if token.Name == name && token.Description == description && token.UserID == userID && !token.Revoked {
+			if token.Name == name && token.Description == description && token.UserID == userID &&
+				!token.Revoked {
 				ids = append(ids, token.ID)
 			}
 		}
