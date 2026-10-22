@@ -8,6 +8,7 @@
 
 ```text
 cmd/server/               进程入口与 api / worker / migrate / bootstrap 命令
+cmd/init/                 外部身份初始化与凭据投影等待命令
 service/                  公开构造、独立应用装配、HTTP 与 Worker 生命周期
 internal/app/authentication/ 登录、OIDC、会话与当前登录主体
 internal/app/credential/     用户与服务 API key 签发、列表和撤销
@@ -41,9 +42,11 @@ conf/server/            server-go 配置与环境变量占位符
 
 server-go 管理配置快照、HTTPHost 启动与排空、请求 ID、日志、Recovery、严格 JSON 绑定和服务 API key 鉴权。Controller 在 HTTP 边界将领域及框架错误映射为既有 `{error:{code,message}}` 格式。租户幂等结果仍与业务、审计和 outbox 一起写入 PostgreSQL。
 
-默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[DB]` 配置数据库驱动、DSN 和连接池，`[Tenant]` 配置本服务的 `PublicURL`、出站 `CAFile` 和幂等响应加密密钥 `EncryptionKey`（环境变量 `TENANT_ENCRYPTION_KEY`，即原 `APP_KEY`，改名时须沿用原值）；顶层 `[Gitlab]` 集中配置 GitLab API / 浏览器地址、OIDC 客户端和管理凭据，`[Casdoor]` 集中配置身份服务、管理客户端、组织和 Forge OIDC 客户端。bootstrap 命令另读环境变量 `BOOTSTRAP_USERNAME`，不作为常驻服务配置。`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。GitLab API 调用使用官方 `client-go/v3`；Casdoor 管理调用复用官方 `casdoor-go-sdk` 的客户端 URL、用户和响应类型。Casdoor SDK v1.56.0 的用户方法不接收 context，HTTP 客户端为包级全局，因此传输保留实例适配，以支持请求取消及私有 CA。业务配置和日志在启动时读取，调整后重启对应进程；API 的框架配置由 `app.Run` 监听，HTTPHost 支持动态更新的项目按框架规则生效。API 收到退出信号后由 `app.Run` 协调 HTTPHost 排空请求，再停止服务、关闭外部 HTTP 空闲连接和数据库；Worker 取消并完成当前操作的结果持久化后释放资源。
+默认加载 `conf/server/config.toml`，可用 `SERVER_CONFIG_PATH` 指定配置文件。`[DB]` 配置数据库驱动、DSN 和连接池，`[Tenant]` 配置本服务的 `PublicURL`、出站 `CAFile` 和幂等响应加密密钥 `EncryptionKey`（环境变量 `TENANT_ENCRYPTION_KEY`，即原 `APP_KEY`，改名时须沿用原值）；顶层 `[Gitlab]` 集中配置 GitLab API / 浏览器地址、OIDC 客户端和管理凭据，`[Casdoor]` 集中配置身份服务、管理客户端、组织和 Forge OIDC 客户端。`[Bootstrap]` 仅供外部初始化使用，包含 `Certificate`、`Username`、`Email`、`GitLabTokenExpiresAt`，对应 `BOOTSTRAP_CERTIFICATE`、`BOOTSTRAP_USERNAME`、`BOOTSTRAP_EMAIL`、`GITLAB_TOKEN_EXPIRES_AT`。常驻服务不要求这些字段；数据库 bootstrap 命令继续读取 `BOOTSTRAP_USERNAME`。`[HTTPServer]` 配置监听地址与超时，`[Log]` 配置日志。GitLab API 调用使用官方 `client-go/v3`；Casdoor 管理调用复用官方 `casdoor-go-sdk` 的客户端 URL、用户和响应类型。Casdoor SDK v1.56.0 的用户方法不接收 context，HTTP 客户端为包级全局，因此传输保留实例适配，以支持请求取消及私有 CA。业务配置和日志在启动时读取，调整后重启对应进程；API 的框架配置由 `app.Run` 监听，HTTPHost 支持动态更新的项目按框架规则生效。API 收到退出信号后由 `app.Run` 协调 HTTPHost 排空请求，再停止服务、关闭外部 HTTP 空闲连接和数据库；Worker 取消并完成当前操作的结果持久化后释放资源。
 
 独立入口使用 `service.Run(ctx, mode)`，API 通过 `app.Run` 统一装配。框架 v0.9.0 不自动读取 `[Log]`，入口装配显式读取并传入 `Options.LogConfig`。Worker 只创建数据库和 GitLab 客户端；migrate 只连接数据库；bootstrap 只创建数据库和 Casdoor 客户端。现有 `/forge api|worker|migrate|bootstrap|gitlab-credential-status` 部署命令保持不变；服务 API key 由 `forge service-credential issue|list|revoke` 维护。
+
+同一镜像另提供 `/forge-init external-bootstrap` 和 `/forge-init wait-external [--directory DIR]`。外部初始化通过 `conf.Load` 加载同一主 TOML，复用 `[Casdoor].URL/Organization`、`[Gitlab].URL`、`[Tenant].PublicURL/CAFile`，只校验自身输入，不要求数据库、Storage 或待生成的 OAuth 凭据。`POD_NAMESPACE` 与 `HELM_RELEASE_NAME` 派生 `<namespace>-<release>-console`、`<namespace>-<release>-management`、`<namespace>-<release>-tenant` 和 `<release>-external-credentials`。管理员输入挂载到 `/bootstrap-admin`，稳定身份 seed 挂载到 `/identity-seed`；等待命令默认读取 `/external` 的原子 Secret 投影。两项操作的时间预算固定为 300 秒，初始化重跑保留既有凭据复用和失败恢复语义。
 
 组合应用导入公开 `service` 包，用 `service.Config{DB: db.Config{...}, Tenant: service.TenantConfig{...}, Gitlab: service.GitlabConfig{...}, Casdoor: service.CasdoorConfig{...}}`（`DB` 为 `server-go/db.Config`）构造配置，调用 `service.NewAPI(ctx, sharedDB, cfg)` 并交给宿主生命周期。配置沿用各 TOML 节的校验规则；`NewAPI` 初始化 OIDC，不执行数据库迁移或平台账号 bootstrap。宿主通过 `service.SetupHTTP` 安装 Forge 响应协议，并负责迁移及共享数据库关闭；不要调用独立 `Build` 重复创建数据库。`NewWorker` 的运行 context 由 `Start` 传入，`Stop` 完成后再关闭借用的数据库。
 
@@ -53,6 +56,7 @@ server-go 管理配置快照、HTTPHost 启动与排空、请求 ID、日志、R
 
 ```sh
 go build -tags=nomsgpack -o bin/forge ./cmd/server
+go build -tags=nomsgpack -o bin/forge-init ./cmd/init
 GIN_MODE=release go test -tags=nomsgpack ./...
 go vet -tags=nomsgpack ./...
 TEST_DATABASE_URL='postgres://user:password@host/database?sslmode=disable' GIN_MODE=release go test -tags=nomsgpack -race -count=1 ./...
@@ -67,22 +71,17 @@ Go 版本以 `go.mod` 为准。数据库测试在真实 PostgreSQL 中创建隔�
 
 ## Kubernetes / Helm
 
-配置示例：`configs/env.example`。API 与 Worker 使用同一镜像的不同命令，独立扩缩容。现有数据库与 Casdoor / GitLab 实例沿用，账号和权限数据无需迁移到新数据库。
+主配置及环境变量占位符见 `conf/server/config.toml`。API 与 Worker 使用同一镜像的不同命令，独立扩缩容。现有数据库与 Casdoor / GitLab 实例沿用，账号和权限数据无需迁移到新数据库。
 
-本机已有联调配置时，保留其 `.local/deployment.json` 和集群 `forge-tenant-env`、`forge-tenant-ca` Secret；**不要重新生成密钥或数据库密码**。首次建立本机联调可执行：
+当前本机环境由相邻 `artifact-go` 仓库的 `charts/forge` umbrella chart 统一安装与升级，namespace 和 release 均为 `forge`。父 chart 负责生成和保留凭据、初始化数据库及专用外部身份；升级时复用现有 seed、TLS 和 PVC。安装输入与命令以该 chart 的 README 为准。
 
-```sh
-python3 scripts/prepare-lab.py --lab-config /path/to/infra.json --kubectl /path/to/kubectl
-FORGE_IMAGE_TAG=0.11.0 ./scripts/deploy-lab.sh
-```
-
-本机部署统一使用 namespace `forge-tenant-split`。后端 Helm release 为 `forge-tenant`，前端独立 release 为 `forge-tenant-web`。浏览器入口通过前端 Service 提供：
+旧本机准备、独立部署和共享 GitLab SSO 重配置脚本已移除；Forge 初始化仅通过父 chart 执行。浏览器入口通过前端 Service 提供：
 
 ```sh
-kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tenant-web 8483:80
+kubectl --context orbstack -n forge port-forward service/forge-web 8483:80
 ```
 
-后端单独调试可把 `service/forge-tenant` 转发到 8484。`PUBLIC_URL` 始终指向浏览器看到的前端 origin（本机部署为 `http://127.0.0.1:8483`），OIDC 回调为该 origin 的 `/auth/callback`，认证跳转页面由 Vue 提供。正式环境应使用 TLS Ingress 和可被集群拉取的版本化镜像；内置单副本 PostgreSQL 用于本机验证，外部数据库可设置 `postgres.enabled=false`。
+后端单独调试可把 `forge` namespace 的 `service/forge-tenant` 转发到 8484。`PUBLIC_URL` 始终指向浏览器看到的前端 origin（本机部署为 `http://127.0.0.1:8483`），OIDC 回调为该 origin 的 `/auth/callback`，认证跳转页面由 Vue 提供。正式环境应使用 TLS Ingress 和可被集群拉取的版本化镜像；内置单副本 PostgreSQL 用于本机验证，外部数据库可设置 `postgres.enabled=false`。
 
 ## 已有业务契约
 
@@ -105,12 +104,10 @@ HTTP 契约见 [docs/api.md](docs/api.md)，访问控制接入见 [docs/agent-in
 
 ## 当前本机环境
 
-当前使用 namespace `forge-tenant-split`、独立 PostgreSQL 和 OIDC client `forge-tenant-split-console`，浏览器入口为 `http://127.0.0.1:8483`。旧版一体化平台、旧 Python 执行器和 `forge-tenant` 命名空间已退役。历史数据库与源码保存在本机加密归档中。
-
-部署脚本默认使用当前命名空间。更新时用 `FORGE_IMAGE_TAG=<版本> ./scripts/deploy-lab.sh`。前端 E2E 默认使用同一命名空间。本机端口转发命令：
+当前使用 namespace / release `forge` 和专用 OIDC client `forge-forge-console`，浏览器入口为 `http://127.0.0.1:8483`。独立部署环境已退役，升级使用 `artifact-go/charts/forge`，不再使用本仓旧部署脚本。
 
 ```sh
-kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tenant-web 8483:80
+kubectl --context orbstack -n forge port-forward service/forge-web 8483:80
 ```
 
 后续功能已迁入：项目执行配置与接入检查、直接新建问题任务、多审查者、每轮配置快照、Agent 判断、代码差异，以及统一导航下的三种任务布局。研发业务现已迁到独立 forge-coding-api，真实模型交付结果见该仓库的验证记录。
@@ -119,15 +116,7 @@ kubectl --context orbstack -n forge-tenant-split port-forward service/forge-tena
 
 当前工作台使用 `http://127.0.0.1:8483`，GitLab 使用 `http://127.0.0.1:18080`。首次登录 Forge 后，打开项目或 MR 会自动完成 GitLab 登录并返回原页面。升级前的 Forge 会话没有身份 Cookie，需要退出 Forge 后重新登录一次。
 
-当前配置由 `scripts/configure-lab-sso.py` 维护。脚本使用已有 Secret 中的凭证，在内存中更新既有 Casdoor/GitLab 客户端，保留账号、外部身份与项目权限。需要 Python 3、Ruby 标准 YAML 库、kubectl、Helm 和已安装版本的 GitLab Chart，不需要导出凭证：
-
-```sh
-# 保持转发运行，再在另一个终端运行配置脚本。
-kubectl --context orbstack -n tenant-lab port-forward svc/casdoor 18500:8000 --address 127.0.0.1
-python3 scripts/configure-lab-sso.py --gitlab-chart /path/to/gitlab-10.4.1.tgz
-```
-
-脚本默认更新 `forge-tenant-split`，可通过 `--namespace` 指定。GitLab 和 Forge 的浏览器入口必须保持可达。本机 GitLab 的 `18080` 转发已由用户级 launchd 服务 `dev.light.forge-gitlab-portforward` 托管，登录后启动，进程退出后自动重启。配置位于 `~/Library/LaunchAgents/dev.light.forge-gitlab-portforward.plist`，仅监听 `127.0.0.1`。可用 `launchctl print gui/$(id -u)/dev.light.forge-gitlab-portforward` 检查状态；不要同时启动另一条 GitLab 转发。工作台的 `8483` 转发同样由用户级 launchd 服务 `dev.light.forge-web-portforward` 托管，配置位于 `~/Library/LaunchAgents/dev.light.forge-web-portforward.plist`，在 Pod 更新导致断开后自动重连。配置后运行前端仓库的 `npm run test:sso`，使用已有可访问 MR 验证完整跳转，不创建或修改 MR。完整租户与权限回归使用 `npm run test:e2e`。
+共享 GitLab OmniAuth provider 保持现状；Forge umbrella 安装仅创建 Forge 专用集成，不修改共享回调或重启 `tenant-lab`。旧 SSO 重配置脚本已退出当前运维流程，不能用它升级 Forge。GitLab 和 Forge 的浏览器入口必须保持可达。本机 GitLab 的 `18080` 转发已由用户级 launchd 服务 `dev.light.forge-gitlab-portforward` 托管，登录后启动，进程退出后自动重启。配置位于 `~/Library/LaunchAgents/dev.light.forge-gitlab-portforward.plist`，仅监听 `127.0.0.1`。可用 `launchctl print gui/$(id -u)/dev.light.forge-gitlab-portforward` 检查状态；不要同时启动另一条 GitLab 转发。工作台的 `8483` 转发同样由用户级 launchd 服务 `dev.light.forge-web-portforward` 托管，配置位于 `~/Library/LaunchAgents/dev.light.forge-web-portforward.plist`，在 Pod 更新导致断开后自动重连。配置后运行前端仓库的 `npm run test:sso`，使用已有可访问 MR 验证完整跳转，不创建或修改 MR。完整租户与权限回归使用 `npm run test:e2e`。
 
 GitLab 实例管理员的本地账号入口为 `/users/sign_in?auto_sign_in=false`。配置依据：[GitLab OmniAuth](https://docs.gitlab.com/integration/omniauth/) 与 [OpenID Connect](https://docs.gitlab.com/administration/auth/oidc/)。
 

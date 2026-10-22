@@ -1,0 +1,21 @@
+# Consumed by the Forge parent chart with alias bootstrap.
+existingSecret: ""
+# Used only when existingSecret is empty. Never put real values in Git.
+authorization:
+  casdoorClientID: ""
+  casdoorClientSecret: ""
+  gitlabToken: ""
+global:
+  forge:
+    tenantImage: {}
+    publicURL: ""
+    external:
+      casdoorURL: ""
+      organization: ""
+      certificate: ""
+      gitlabURL: ""
+      caSecret: ""
+    bootstrap:
+      username: ""
+      email: ""
+      gitlabTokenExpiresAt: ""

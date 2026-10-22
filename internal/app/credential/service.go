@@ -111,6 +111,79 @@ func (a *Service) IssueService(
 	}, nil
 }
 
+// EnsureService registers a pre-generated token without returning or persisting plaintext.
+// An existing row is never extended, reassigned, or reactivated.
+func (a *Service) EnsureService(ctx context.Context, service, name, token, expiry string) (Metadata, error) {
+	if !serviceSlug.MatchString(service) {
+		return Metadata{}, apperror.New(422, "INVALID_SERVICE_NAME", "服务名须为 2–64 位小写字母、数字或连字符")
+	}
+	if err := validateName(name); err != nil {
+		return Metadata{}, err
+	}
+	if !strings.HasPrefix(token, "ftk_") {
+		return Metadata{}, apperror.New(422, "INVALID_TOKEN", "invalid service token format")
+	}
+	secret, err := base64.RawURLEncoding.Strict().DecodeString(strings.TrimPrefix(token, "ftk_"))
+	if err != nil || len(secret) != 32 {
+		return Metadata{}, apperror.New(422, "INVALID_TOKEN", "invalid service token format")
+	}
+	hash := identity.Hash(token)
+	var result Metadata
+	err = a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		rows, err := table.CredentialsForEnsure(ctx, tx, service, name, hash)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.SecretHash != hash || row.OwnerKind != "service" || row.ServiceName == nil ||
+				*row.ServiceName != service ||
+				row.Name != name {
+				return apperror.New(
+					409,
+					"CREDENTIAL_CONFLICT",
+					"credential token or owner conflicts with existing registration",
+				)
+			}
+			if row.RevokedAt != nil || !row.ExpiresAt.After(time.Now()) {
+				return apperror.New(
+					409,
+					"CREDENTIAL_INACTIVE",
+					"registered credential is revoked or expired",
+				)
+			}
+			result = metadata(row)
+		}
+		if len(rows) > 0 {
+			return nil
+		}
+		expiresAt, err := Expiry(expiry, 365*24*time.Hour)
+		if err != nil {
+			return err
+		}
+		id := identity.ID("cr")
+		if _, err := table.InsertCredential(
+			ctx,
+			tx,
+			id,
+			"service",
+			"",
+			service,
+			name,
+			hash,
+			expiresAt,
+		); err != nil {
+			return err
+		}
+		row, err := table.CredentialByID(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		result = metadata(row)
+		return nil
+	})
+	return result, err
+}
+
 func (a *Service) ListUser(ctx context.Context, userID string) ([]Metadata, error) {
 	rows, err := table.ListUserCredentials(ctx, a.DB, userID)
 	if err != nil {

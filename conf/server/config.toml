@@ -42,6 +42,13 @@ Issuer = "${env: OIDC_ISSUER:}"
 OIDCClientID = "${env: OIDC_CLIENT_ID:}"
 OIDCClientSecret = "${env: OIDC_CLIENT_SECRET:}"
 
+# Used only by /forge-init external-bootstrap; runtime services do not require these inputs.
+[Bootstrap]
+Certificate = "${env: BOOTSTRAP_CERTIFICATE:}"
+Username = "${env: BOOTSTRAP_USERNAME:}"
+Email = "${env: BOOTSTRAP_EMAIL:}"
+GitLabTokenExpiresAt = "${env: GITLAB_TOKEN_EXPIRES_AT:}"
+
 # Optional. New tenants always record a durable obligation; the worker starts
 # storage preparation only when this endpoint and its independent credential are set.
 [Storage]

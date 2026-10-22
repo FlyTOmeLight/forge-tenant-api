@@ -1,8 +1,8 @@
-{{- if .Values.internalTLS.enabled }}
+{{- if (or .Values.internalTLS.enabled .Values.global.forge.enabled) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}-internal-tls
+  name: {{ include "forge-tenant.fullname" . }}-internal-tls
 data:
   nginx.conf: |
     pid /tmp/nginx.pid;

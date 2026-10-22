@@ -40,13 +40,18 @@ type CasdoorConfig struct {
 	Issuer, OIDCClientID, OIDCClientSecret string
 }
 
+type BootstrapConfig struct {
+	Certificate, Username, Email, GitLabTokenExpiresAt string
+}
+
 // File mirrors the top-level TOML sections.
 type File struct {
-	DB      db.Config
-	Tenant  TenantConfig
-	Gitlab  GitlabConfig
-	Casdoor CasdoorConfig
-	Storage StorageConfig
+	DB        db.Config
+	Tenant    TenantConfig
+	Gitlab    GitlabConfig
+	Casdoor   CasdoorConfig
+	Storage   StorageConfig
+	Bootstrap BootstrapConfig
 }
 
 func Load(snapshot *conf.Config) (Config, error) {

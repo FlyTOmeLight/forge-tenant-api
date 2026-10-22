@@ -25,6 +25,11 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if mode == "bootstrap" {
+		if err := service.LoadExternalEnvironment(os.Getenv("EXTERNAL_SECRET_DIRECTORY")); err != nil {
+			return err
+		}
+	}
 	if mode == "gitlab-credential-status" {
 		return service.CredentialStatus(ctx, os.Stdout)
 	}

@@ -1,18 +1,24 @@
+{{- $image := .Values.image -}}
+{{- if .Values.global.forge.enabled -}}
+{{- $image = required "global.forge.tenantImage is required" .Values.global.forge.tenantImage -}}
+{{- $_ := required "global.forge.tenantImage.repository is required" $image.repository -}}
+{{- $_ := required "global.forge.tenantImage.tag is required" $image.tag -}}
+{{- end -}}
 {{- range $mode := list "api" "worker" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $.Release.Name }}-{{ $mode }}
+  name: {{ include "forge-tenant.fullname" $ }}-{{ $mode }}
 spec:
   replicas: {{ if eq $mode "api" }}{{ $.Values.api.replicas }}{{ else }}{{ $.Values.worker.replicas }}{{ end }}
   selector:
-    matchLabels: {app: {{ $.Release.Name }}-{{ $mode }}}
+    matchLabels: {app: {{ include "forge-tenant.fullname" $ }}-{{ $mode }}}
   template:
     metadata:
-      labels: {app: {{ $.Release.Name }}-{{ $mode }}}
+      labels: {app: {{ include "forge-tenant.fullname" $ }}-{{ $mode }}}
       annotations:
         forge/config-revision: {{ $.Values.configRevision | default "initial" | quote }}
-        {{- if and (eq $mode "api") $.Values.internalTLS.enabled }}
+        {{- if and (eq $mode "api") (or $.Values.internalTLS.enabled $.Values.global.forge.enabled) }}
         checksum/internal-tls: {{ include (print $.Template.BasePath "/internal-tls.yaml") $ | sha256sum }}
         {{- end }}
     spec:
@@ -23,38 +29,68 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
       initContainers:
+        {{- if $.Values.global.forge.enabled }}
+        - name: wait-external
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          command: [/forge-init]
+          args: [wait-external, --directory, /external]
+          volumeMounts: [{name: external, mountPath: /external, readOnly: true}]
+        {{- end }}
         - name: migrate
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
           args: [migrate]
-          envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
-          env: [{name: GITLAB_TOKEN_FILE, value: /var/run/forge-gitlab/token}]
-          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}, {name: gitlab-token, mountPath: /var/run/forge-gitlab, readOnly: true}]
+          envFrom: [{secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}}]
+          volumeMounts: [{name: ca, mountPath: {{ include "forge-tenant.caMount" $ }}, readOnly: true}]
         {{- if eq $mode "api" }}
+        {{- if $.Values.global.forge.enabled }}
+        - name: artifact-service-key
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          args: [service-credential, ensure, artifact, /service-key/TENANT_SERVICE_TOKEN, artifact]
+          envFrom: [{secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}}]
+          volumeMounts: [{name: service-key, mountPath: /service-key, readOnly: true}, {name: ca, mountPath: /tls, readOnly: true}]
+        {{- end }}
         - name: bootstrap
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
           args: [bootstrap]
-          envFrom: [{secretRef: {name: {{ $.Values.existingSecret }}}}]
-          env: [{name: GITLAB_TOKEN_FILE, value: /var/run/forge-gitlab/token}]
-          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}, {name: gitlab-token, mountPath: /var/run/forge-gitlab, readOnly: true}]
+          envFrom: [{secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}}]
+          {{- if $.Values.global.forge.enabled }}
+          env: [{name: EXTERNAL_SECRET_DIRECTORY, value: /external}]
+          {{- end }}
+          volumeMounts:
+            - {name: ca, mountPath: {{ include "forge-tenant.caMount" $ }}, readOnly: true}
+            {{- if $.Values.global.forge.enabled }}
+            - {name: external, mountPath: /external, readOnly: true}
+            {{- end }}
         {{- end }}
       containers:
         - name: {{ $mode }}
-          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
           args: [{{ $mode }}]
           envFrom:
-            - secretRef: {name: {{ $.Values.existingSecret }}}
+            - secretRef: {name: {{ include "forge-tenant.envSecret" $ }}}
+            {{- if $.Values.global.forge.enabled }}
+            - secretRef: {name: {{ include "forge-tenant.externalSecret" $ }}}
+            {{- end }}
             {{- if and (eq $mode "worker") $.Values.worker.existingSecret }}
             - secretRef: {name: {{ $.Values.worker.existingSecret }}}
             {{- end }}
-          env: [{name: GITLAB_TOKEN_FILE, value: /var/run/forge-gitlab/token}]
+          env: [{name: GITLAB_TOKEN_FILE, value: {{ if $.Values.global.forge.enabled }}/external/GITLAB_TOKEN{{ else }}/var/run/forge-gitlab/token{{ end }}}]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
-          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}, {name: gitlab-token, mountPath: /var/run/forge-gitlab, readOnly: true}]
+          volumeMounts:
+            - {name: ca, mountPath: {{ include "forge-tenant.caMount" $ }}, readOnly: true}
+            {{- if $.Values.global.forge.enabled }}
+            - {name: external, mountPath: /external, readOnly: true}
+            {{- else }}
+            - {name: gitlab-token, mountPath: /var/run/forge-gitlab, readOnly: true}
+            {{- end }}
           {{- if eq $mode "api" }}
           ports: [{containerPort: 8080}]
           readinessProbe:
@@ -67,7 +103,7 @@ spec:
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {memory: 256Mi}
-        {{- if and (eq $mode "api") $.Values.internalTLS.enabled }}
+        {{- if and (eq $mode "api") (or $.Values.internalTLS.enabled $.Values.global.forge.enabled) }}
         - name: integration-tls
           image: {{ $.Values.internalTLS.image | quote }}
           imagePullPolicy: IfNotPresent
@@ -88,21 +124,34 @@ spec:
             - {name: integration-tmp, mountPath: /tmp}
         {{- end }}
       volumes:
+        {{- if $.Values.global.forge.enabled }}
+        - name: external
+          secret: {secretName: {{ include "forge-tenant.externalSecret" $ }}}
+        {{- if eq $mode "api" }}
+        - name: service-key
+          secret:
+            secretName: {{ $.Release.Name }}-artifact-env
+            items: [{key: TENANT_SERVICE_TOKEN, path: TENANT_SERVICE_TOKEN}]
+        {{- end }}
+        {{- else }}
         - name: gitlab-token
           secret:
-            secretName: {{ $.Values.existingSecret }}
+            secretName: {{ include "forge-tenant.envSecret" $ }}
             items: [{key: GITLAB_TOKEN, path: token}]
+        {{- end }}
         - name: ca
-          secret: {secretName: {{ if eq $mode "worker" }}{{ $.Values.worker.caSecret | default $.Values.caSecret }}{{ else }}{{ $.Values.caSecret }}{{ end }}}
-        {{- if and (eq $mode "api") $.Values.internalTLS.enabled }}
+          secret:
+            secretName: {{ if $.Values.global.forge.enabled }}{{ $.Release.Name }}-tls{{ else if eq $mode "worker" }}{{ $.Values.worker.caSecret | default $.Values.caSecret }}{{ else }}{{ $.Values.caSecret }}{{ end }}
+            items: [{key: ca.crt, path: ca.crt}]
+        {{- if and (eq $mode "api") (or $.Values.internalTLS.enabled $.Values.global.forge.enabled) }}
         - name: integration-tls
           secret:
-            secretName: {{ required "internalTLS.existingSecret is required when internalTLS is enabled" $.Values.internalTLS.existingSecret }}
+            secretName: {{ include "forge-tenant.tlsSecret" $ }}
             items:
-              - {key: {{ $.Values.internalTLS.certificateKey }}, path: tls.crt}
-              - {key: {{ $.Values.internalTLS.privateKeyKey }}, path: tls.key}
+              - {key: {{ if $.Values.global.forge.enabled }}tenant.crt{{ else }}{{ $.Values.internalTLS.certificateKey }}{{ end }}, path: tls.crt}
+              - {key: {{ if $.Values.global.forge.enabled }}tenant.key{{ else }}{{ $.Values.internalTLS.privateKeyKey }}{{ end }}, path: tls.key}
         - name: integration-nginx
-          configMap: {name: {{ $.Release.Name }}-internal-tls}
+          configMap: {name: {{ include "forge-tenant.fullname" $ }}-internal-tls}
         - name: integration-tmp
           emptyDir: {}
         {{- end }}
@@ -111,11 +160,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}
+  name: {{ include "forge-tenant.fullname" . }}
 spec:
-  selector: {app: {{ .Release.Name }}-api}
+  selector: {app: {{ include "forge-tenant.fullname" . }}-api}
   ports:
     - {name: http, port: 80, targetPort: 8080}
-    {{- if .Values.internalTLS.enabled }}
+    {{- if or .Values.internalTLS.enabled .Values.global.forge.enabled }}
     - {name: integration-tls, port: 8443, targetPort: internal-tls}
     {{- end }}
