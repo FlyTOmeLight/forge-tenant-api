@@ -51,7 +51,6 @@ func ExternalBootstrap(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer store.HTTP.CloseIdleConnections()
 	return bootstrap.Run(ctx, c, store, transport)
 }
 

@@ -1,21 +1,18 @@
 package bootstrap
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
 	"time"
 
-	"github.com/FlyTOmeLight/forge-tenant-api/internal/client"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -24,85 +21,62 @@ const (
 )
 
 type SecretState struct {
-	Metadata struct {
-		ResourceVersion string            `json:"resourceVersion"`
-		Annotations     map[string]string `json:"annotations"`
-	} `json:"metadata"`
-	Data map[string]string `json:"data"`
+	Metadata metav1.ObjectMeta
+	Data     map[string]string
 }
 
 // SecretStore only addresses the single pre-created output Secret. It requires
 // get/patch, never create/list/update/delete permission.
 type SecretStore struct {
-	HTTP           *http.Client
-	URL, TokenFile string
-	holder         string
+	secrets typedcorev1.SecretInterface
+	name    string
+	holder  string
 }
 
 func InClusterStore(namespace, name string) (*SecretStore, error) {
-	transport, err := client.NewHTTP("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+	config, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, err
+		return nil, errors.New("cannot load Kubernetes in-cluster configuration")
 	}
-	return &SecretStore{
-		HTTP: transport,
-		URL: "https://kubernetes.default.svc/api/v1/namespaces/" + url.PathEscape(
-			namespace,
-		) + "/secrets/" + url.PathEscape(
-			name,
-		),
-		TokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
-	}, nil
+	config.Host = "https://kubernetes.default.svc"
+	client, err := typedcorev1.NewForConfig(config)
+	if err != nil {
+		return nil, errors.New("cannot initialize Kubernetes Secret client")
+	}
+	return &SecretStore{secrets: client.Secrets(namespace), name: name}, nil
 }
 
-func (s *SecretStore) request(ctx context.Context, method string, body any) (*SecretState, error) {
-	var data []byte
-	var err error
-	if body != nil {
-		data, err = json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
+func secretState(secret *corev1.Secret) *SecretState {
+	state := &SecretState{Metadata: secret.ObjectMeta, Data: map[string]string{}}
+	for key, value := range secret.Data {
+		state.Data[key] = string(value)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, s.URL, bytes.NewReader(data))
+	return state
+}
+
+func (s *SecretStore) get(ctx context.Context) (*SecretState, error) {
+	secret, err := s.secrets.Get(ctx, s.name, metav1.GetOptions{})
 	if err != nil {
-		return nil, errors.New("invalid output Secret endpoint")
+		return nil, errors.New("cannot read output Secret")
 	}
-	token, err := os.ReadFile(s.TokenFile)
+	return secretState(secret), nil
+}
+
+func (s *SecretStore) patch(ctx context.Context, body any) (*SecretState, error) {
+	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, errors.New("cannot read Kubernetes service account token")
+		return nil, errors.New("cannot encode output Secret patch")
 	}
-	req.Header.Set("Authorization", "Bearer "+string(bytes.TrimSpace(token)))
-	if method == http.MethodPatch {
-		req.Header.Set("Content-Type", "application/merge-patch+json")
-	}
-	resp, err := s.HTTP.Do(req)
+	secret, err := s.secrets.Patch(ctx, s.name, types.MergePatchType, data, metav1.PatchOptions{})
 	if err != nil {
-		return nil, errors.New("output Secret request failed")
+		// API errors can contain request data; do not disclose credentials.
+		return nil, errors.New("cannot patch output Secret")
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("output Secret %s failed (HTTP %d)", method, resp.StatusCode)
-	}
-	var result SecretState
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-		return nil, errors.New("invalid output Secret response")
-	}
-	if result.Data == nil {
-		result.Data = map[string]string{}
-	}
-	for key, value := range result.Data {
-		raw, err := base64.StdEncoding.DecodeString(value)
-		if err != nil {
-			return nil, errors.New("invalid output Secret encoding")
-		}
-		result.Data[key] = string(raw)
-	}
-	return &result, nil
+	return secretState(secret), nil
 }
 
 func (s *SecretStore) Acquire(ctx context.Context, duration time.Duration) (*SecretState, error) {
-	state, err := s.request(ctx, http.MethodGet, nil)
+	state, err := s.get(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -126,10 +100,10 @@ func (s *SecretStore) Acquire(ctx context.Context, duration time.Duration) (*Sec
 			},
 		},
 	}
-	result, err := s.request(ctx, http.MethodPatch, body)
+	result, err := s.patch(ctx, body)
 	if err != nil {
 		// A response can be lost after the compare-and-swap succeeded.
-		result, err = s.request(ctx, http.MethodGet, nil)
+		result, err = s.get(ctx)
 		if err != nil || result.Metadata.Annotations[leaseKey] != s.holder {
 			return nil, errors.New("cannot acquire external bootstrap lease")
 		}
@@ -138,18 +112,10 @@ func (s *SecretStore) Acquire(ctx context.Context, duration time.Duration) (*Sec
 }
 
 func (s *SecretStore) Save(ctx context.Context, state *SecretState) error {
-	encoded := map[string]string{}
-	for key, value := range state.Data {
-		encoded[key] = base64.StdEncoding.EncodeToString([]byte(value))
-	}
-	result, err := s.request(
-		ctx,
-		http.MethodPatch,
-		map[string]any{
-			"metadata": map[string]any{"resourceVersion": state.Metadata.ResourceVersion},
-			"data":     encoded,
-		},
-	)
+	result, err := s.patch(ctx, map[string]any{
+		"metadata":   map[string]any{"resourceVersion": state.Metadata.ResourceVersion},
+		"stringData": state.Data,
+	})
 	if err != nil {
 		return err
 	}
@@ -160,18 +126,14 @@ func (s *SecretStore) Save(ctx context.Context, state *SecretState) error {
 func (s *SecretStore) Release(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	state, err := s.request(ctx, http.MethodGet, nil)
+	state, err := s.get(ctx)
 	if err != nil || state.Metadata.Annotations[leaseKey] != s.holder {
 		return
 	}
-	_, _ = s.request(
-		ctx,
-		http.MethodPatch,
-		map[string]any{
-			"metadata": map[string]any{
-				"resourceVersion": state.Metadata.ResourceVersion,
-				"annotations":     map[string]any{leaseKey: nil, leaseUntilKey: nil},
-			},
+	_, _ = s.patch(ctx, map[string]any{
+		"metadata": map[string]any{
+			"resourceVersion": state.Metadata.ResourceVersion,
+			"annotations":     map[string]any{leaseKey: nil, leaseUntilKey: nil},
 		},
-	)
+	})
 }

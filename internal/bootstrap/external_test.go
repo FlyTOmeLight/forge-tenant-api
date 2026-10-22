@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/casdoor/casdoor-go-sdk/casdoorsdk"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 )
 
 type bootstrapFixture struct {
@@ -77,15 +79,14 @@ func newBootstrapFixture(t *testing.T) *bootstrapFixture {
 		SeedDirectory:         seed,
 		TimeoutSeconds:        30,
 	}
-	sa := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(sa, []byte("kubernetes-sa"), 0o600); err != nil {
+	kube, err := typedcorev1.NewForConfig(&rest.Config{
+		Host:        f.server.URL,
+		BearerToken: "kubernetes-sa",
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	f.store = &SecretStore{
-		HTTP:      f.server.Client(),
-		URL:       f.server.URL + "/api/v1/namespaces/forge/secrets/forge-external",
-		TokenFile: sa,
-	}
+	f.store = &SecretStore{secrets: kube.Secrets("forge"), name: "forge-external"}
 	return f
 }
 
@@ -109,7 +110,7 @@ func (f *bootstrapFixture) serve(w http.ResponseWriter, r *http.Request) {
 					ResourceVersion string             `json:"resourceVersion"`
 					Annotations     map[string]*string `json:"annotations"`
 				} `json:"metadata"`
-				Data map[string]string `json:"data"`
+				StringData map[string]string `json:"stringData"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			if p.Metadata.ResourceVersion != strconv.Itoa(f.version) {
@@ -123,9 +124,8 @@ func (f *bootstrapFixture) serve(w http.ResponseWriter, r *http.Request) {
 					f.annotations[k] = *v
 				}
 			}
-			for k, v := range p.Data {
-				raw, _ := base64.StdEncoding.DecodeString(v)
-				f.secret[k] = string(raw)
+			for k, v := range p.StringData {
+				f.secret[k] = v
 			}
 			f.version++
 			if f.loseSave && f.secret["GITLAB_TOKEN"] != "" {
