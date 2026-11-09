@@ -34,10 +34,20 @@ func (h *Controller) createTenant(c *core.Context) { tenantwrite.Execute(c, h.se
 
 func (h *Controller) updateTenant(c *core.Context) { tenantwrite.Execute(c, h.service.UpdateTenant) }
 
-func (h *Controller) RegisterRoutes(session *core.RouterGroup) {
+func (h *Controller) getTenantStatus(c *core.Context) {
+	result, err := h.service.GetTenantStatus(c.Request.Context(), c.Param("tid"))
+	if err != nil {
+		httpapi.Fail(c, err)
+		return
+	}
+	server.OK(c, result)
+}
+
+func (h *Controller) RegisterRoutes(session, internal *core.RouterGroup) {
 	platform := session.Group("/api/v1/platform/tenants")
 	platform.GET("", h.listPlatformTenants)
 	platform.POST("", h.createTenant)
 	platform.PATCH("/:tid", h.updateTenant)
 	session.GET("/api/v1/tenants", h.listTenants)
+	internal.GET("/tenants/:tid/status", h.getTenantStatus)
 }

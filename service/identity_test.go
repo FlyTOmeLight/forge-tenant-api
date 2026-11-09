@@ -21,6 +21,21 @@ func (f *fixture) internal(t *testing.T, path string, body Object) (int, Object)
 	raw, _ := json.Marshal(body)
 	r := httptest.NewRequest("POST", path, bytes.NewReader(raw))
 	r.Header.Set("Authorization", "Bearer "+f.a.ServiceKey)
+	return f.serveInternal(t, r)
+}
+
+// internalGet calls a service-authenticated GET route.
+func (f *fixture) internalGet(t *testing.T, path, credential string) (int, Object) {
+	t.Helper()
+	r := httptest.NewRequest("GET", path, nil)
+	if credential != "" {
+		r.Header.Set("Authorization", "Bearer "+credential)
+	}
+	return f.serveInternal(t, r)
+}
+
+func (f *fixture) serveInternal(t *testing.T, r *http.Request) (int, Object) {
+	t.Helper()
 	w := httptest.NewRecorder()
 	apiHandler(t, f.a).ServeHTTP(w, r)
 	out := Object{}
@@ -28,6 +43,69 @@ func (f *fixture) internal(t *testing.T, path string, body Object) (int, Object)
 		t.Fatalf("non-JSON internal response status %d", w.Code)
 	}
 	return w.Code, out
+}
+
+func TestInternalTenantStatus(t *testing.T) {
+	f := setup(t)
+	tid, _ := f.tenant(t)
+	for _, tc := range []struct {
+		name, path, credential string
+		status                 int
+		code                   string
+	}{
+		{name: "active", path: "/internal/v1/tenants/" + tid + "/status", credential: f.a.ServiceKey, status: 200},
+		{name: "missing credential", path: "/internal/v1/tenants/" + tid + "/status", status: 401, code: "SERVICE_AUTH_REQUIRED"},
+		{name: "user credential", path: "/internal/v1/tenants/" + tid + "/status", credential: f.a.userKey, status: 401, code: "SERVICE_AUTH_REQUIRED"},
+		{name: "invalid ID", path: "/internal/v1/tenants/bad%20id/status", credential: f.a.ServiceKey, status: 400, code: "INVALID_TENANT_ID"},
+		{name: "missing tenant", path: "/internal/v1/tenants/t_000000000000000000000000/status", credential: f.a.ServiceKey, status: 404, code: "TENANT_NOT_FOUND"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, body := f.internalGet(t, tc.path, tc.credential)
+			if gotStatus != tc.status {
+				t.Fatalf("status = %d, want %d: %v", gotStatus, tc.status, body)
+			}
+			if tc.code != "" && code(t, body) != tc.code {
+				t.Fatalf("error = %v, want %s", body, tc.code)
+			}
+			if tc.status == 200 && (body["tenant_id"] != tid || body["status"] != "active") {
+				t.Fatalf("body = %v", body)
+			}
+		})
+	}
+	if err := f.a.DB.WithContext(f.ctx).
+		Exec(`UPDATE tenants SET status='suspended' WHERE id=?`, tid).Error; err != nil {
+		t.Fatal(err)
+	}
+	status, body := f.internalGet(t, "/internal/v1/tenants/"+tid+"/status", f.a.ServiceKey)
+	if status != 200 || body["status"] != "suspended" {
+		t.Fatalf("suspended tenant = %d %v", status, body)
+	}
+}
+
+func TestInternalServiceSelf(t *testing.T) {
+	f := setup(t)
+	for _, tc := range []struct {
+		name, path, credential string
+		status                 int
+		code                   string
+	}{
+		{name: "service", path: "/internal/v1/service/self", credential: f.a.ServiceKey, status: 200},
+		{name: "missing credential", path: "/internal/v1/service/self", status: 401, code: "SERVICE_AUTH_REQUIRED"},
+		{name: "user credential", path: "/internal/v1/service/self", credential: f.a.userKey, status: 401, code: "SERVICE_AUTH_REQUIRED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, body := f.internalGet(t, tc.path, tc.credential)
+			if gotStatus != tc.status {
+				t.Fatalf("status = %d, want %d: %v", gotStatus, tc.status, body)
+			}
+			if tc.code != "" && code(t, body) != tc.code {
+				t.Fatalf("error = %v, want %s", body, tc.code)
+			}
+			if tc.status == 200 && body["service"] != "forge-test" {
+				t.Fatalf("body = %v", body)
+			}
+		})
+	}
 }
 
 // read presents either a session cookie or a user API key on a business route.

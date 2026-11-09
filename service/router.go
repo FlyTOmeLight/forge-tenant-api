@@ -12,7 +12,7 @@ func (s *API) RegisterRoutes(root *core.RouterGroup) error {
 	s.accounts.RegisterRoutes(root, cookie, internal)
 	s.credentials.RegisterRoutes(cookie)
 	s.users.RegisterRoutes(identity)
-	s.tenants.RegisterRoutes(identity)
+	s.tenants.RegisterRoutes(identity, internal)
 	s.members.RegisterRoutes(identity)
 	s.teams.RegisterRoutes(identity)
 	s.projects.RegisterRoutes(identity, internal)

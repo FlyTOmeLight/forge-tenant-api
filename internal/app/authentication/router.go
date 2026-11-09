@@ -11,4 +11,5 @@ func (h *Controller) RegisterRoutes(root, session, internal *core.RouterGroup) {
 	session.GET("/api/v1/me", h.me)
 	internal.POST("/identity/resolve", h.resolveIdentity)
 	internal.POST("/scope/resolve", h.resolveScope)
+	internal.GET("/service/self", h.serviceSelf)
 }

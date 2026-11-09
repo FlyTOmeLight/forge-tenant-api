@@ -29,14 +29,9 @@ type Config struct {
 type Client struct{ transport *frameworksdk.Client }
 
 func New(config Config) (*Client, error) {
-	endpoint, err := url.Parse(config.Endpoint)
-	if err != nil || endpoint.Host == "" || !allowedEndpointScheme(endpoint) ||
-		endpoint.User != nil ||
-		endpoint.RawQuery != "" ||
-		endpoint.Fragment != "" {
-		return nil, errors.New(
-			"tenant SDK endpoint must be an absolute HTTPS URL, or HTTP for a loopback host, without credentials, query or fragment",
-		)
+	endpoint, err := normalizeEndpoint(config.Endpoint)
+	if err != nil {
+		return nil, err
 	}
 	if len(config.ServiceAPIKey) < 32 || strings.ContainsAny(config.ServiceAPIKey, "\r\n") {
 		return nil, errors.New(
@@ -51,7 +46,7 @@ func New(config Config) (*Client, error) {
 	}
 	transport, err := frameworksdk.NewClientWithConfig(
 		&frameworksdk.Config{
-			Endpoint: strings.TrimRight(config.Endpoint, "/"),
+			Endpoint: endpoint,
 			Credentials: &frameworksdk.Credentials{
 				AuthType: frameworksdk.AuthTypeAPIKey,
 				APIKey:   config.ServiceAPIKey,
@@ -64,6 +59,19 @@ func New(config Config) (*Client, error) {
 	transport.SetTimeout(config.Timeout)
 	transport.Client.Client().CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Client{transport: transport}, nil
+}
+
+func normalizeEndpoint(raw string) (string, error) {
+	endpoint, err := url.Parse(raw)
+	if err != nil || endpoint.Host == "" || !allowedEndpointScheme(endpoint) ||
+		endpoint.User != nil ||
+		endpoint.RawQuery != "" ||
+		endpoint.Fragment != "" {
+		return "", errors.New(
+			"tenant SDK endpoint must be an absolute HTTPS URL, or HTTP for a loopback host, without credentials, query or fragment",
+		)
+	}
+	return strings.TrimRight(raw, "/"), nil
 }
 
 // Close releases the client's connections after its callers have finished.
@@ -105,20 +113,7 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	}
 	data := response.Bytes()
 	if response.StatusCode() != http.StatusOK {
-		// Forge's existing API wraps the framework error in an error property.
-		var envelope struct {
-			Error json.RawMessage `json:"error"`
-		}
-		payload := data
-		if json.Unmarshal(data, &envelope) == nil && len(envelope.Error) > 0 {
-			payload = envelope.Error
-		}
-		detail := frameworksdk.DecodeError(response.StatusCode(), bytes.NewReader(payload))
-		id := detail.RequestID
-		if id == "" {
-			id = response.Header().Get("Request-ID")
-		}
-		return &Error{Status: detail.Status, Code: detail.Code, Message: detail.Message, RequestID: id}
+		return decodeErrorResponse(data, response.StatusCode(), response.Header())
 	}
 	if err := json.Unmarshal(data, result); err != nil {
 		return fmt.Errorf("decode tenant API response: %w", err)
@@ -128,4 +123,21 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 		return errors.New("tenant API returned a null response")
 	}
 	return nil
+}
+
+func decodeErrorResponse(data []byte, status int, header http.Header) *Error {
+	// Forge's existing API wraps the framework error in an error property.
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	payload := data
+	if json.Unmarshal(data, &envelope) == nil && len(envelope.Error) > 0 {
+		payload = envelope.Error
+	}
+	detail := frameworksdk.DecodeError(status, bytes.NewReader(payload))
+	id := detail.RequestID
+	if id == "" && header != nil {
+		id = header.Get("Request-ID")
+	}
+	return &Error{Status: detail.Status, Code: detail.Code, Message: detail.Message, RequestID: id}
 }

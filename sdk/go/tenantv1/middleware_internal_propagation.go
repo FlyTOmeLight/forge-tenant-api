@@ -62,10 +62,10 @@ func (config ServiceAuthConfig) authenticate(c *core.Context) (string, error) {
 func abortServiceAuth(c *core.Context, err error) {
 	var detail *Error
 	if errors.As(err, &detail) && detail.Status == http.StatusUnauthorized {
-		serrors.Abort(c, http.StatusUnauthorized, "Unauthorized", "unknown internal service key")
+		serrors.Abort(c, http.StatusUnauthorized, "SERVICE_AUTH_REQUIRED", "unknown internal service key")
 		return
 	}
-	serrors.Abort(c, http.StatusServiceUnavailable, "ServiceUnavailable", identityUnavailableMessage)
+	serrors.Abort(c, http.StatusServiceUnavailable, "IDENTITY_UNAVAILABLE", identityUnavailableMessage)
 }
 
 // MiddlewareServiceAuth authenticates an internal caller by its service API key

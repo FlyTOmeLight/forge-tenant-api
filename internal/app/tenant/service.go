@@ -2,6 +2,8 @@ package tenant
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"regexp"
 	"strings"
 
@@ -29,6 +31,30 @@ type CreateTenantRequest struct {
 type TenantStatusRequest struct {
 	Status string `json:"status"`
 }
+
+// TenantStatus is the minimal internal representation of a tenant's state.
+type TenantStatus struct {
+	TenantID string `json:"tenant_id"`
+	Status   string `json:"status"`
+}
+
+func (a *Service) GetTenantStatus(ctx context.Context, tenantID string) (*TenantStatus, error) {
+	if tenantID == "" || tenantID != strings.TrimSpace(tenantID) || len(tenantID) > 128 ||
+		!tenantIDPattern.MatchString(tenantID) {
+		return nil, apperror.New(400, "INVALID_TENANT_ID", "租户 ID 格式无效")
+	}
+	var status string
+	err := table.TenantStatus(ctx, a.DB, tenantID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, apperror.New(404, "TENANT_NOT_FOUND", "租户不存在")
+	}
+	if err != nil {
+		return nil, apperror.New(500, "INTERNAL_ERROR", "服务暂不可用")
+	}
+	return &TenantStatus{TenantID: tenantID, Status: status}, nil
+}
+
+var tenantIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
 func (a *Service) CreateTenant(
 	ctx context.Context,

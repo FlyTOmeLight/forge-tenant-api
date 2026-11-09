@@ -150,3 +150,12 @@ func (h *Controller) resolveScope(c *core.Context) {
 	}
 	server.OK(c, result)
 }
+
+func (h *Controller) serviceSelf(c *core.Context) {
+	service := c.GetString("forge.service")
+	if service == "" {
+		httpapi.Fail(c, apperror.New(401, "SERVICE_AUTH_REQUIRED", "服务身份校验失败"))
+		return
+	}
+	server.OK(c, map[string]any{"service": service})
+}

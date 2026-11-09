@@ -2,6 +2,7 @@ package tenantv1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -84,12 +85,13 @@ func TestMiddlewareServiceAuth(t *testing.T) {
 		dynamic     bool
 		status      int
 		service     string
+		code        string
 	}{
 		{name: "accepted", token: propagationServiceToken, status: http.StatusOK, service: "agentic-kit-api"},
 		{name: "resolved dynamically", token: propagationServiceToken, dynamic: true, status: http.StatusOK, service: "coding"},
-		{name: "rejected credential", token: propagationServiceToken, dynamic: true, status: http.StatusUnauthorized},
-		{name: "resolver unavailable", token: propagationServiceToken, dynamic: true, status: http.StatusServiceUnavailable, service: "unavailable"},
-		{name: "missing token", status: http.StatusUnauthorized},
+		{name: "rejected credential", token: propagationServiceToken, dynamic: true, status: http.StatusUnauthorized, code: "SERVICE_AUTH_REQUIRED"},
+		{name: "resolver unavailable", token: propagationServiceToken, dynamic: true, status: http.StatusServiceUnavailable, service: "unavailable", code: "IDENTITY_UNAVAILABLE"},
+		{name: "missing token", status: http.StatusUnauthorized, code: "SERVICE_AUTH_REQUIRED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config := ServiceAuthConfig{Authenticate: func(context.Context, string) (string, error) {
@@ -130,6 +132,18 @@ func TestMiddlewareServiceAuth(t *testing.T) {
 			engine.ServeHTTP(writer, req)
 			if writer.Code != tc.status {
 				t.Fatalf("status = %d, want %d", writer.Code, tc.status)
+			}
+			if tc.code != "" {
+				var body struct {
+					Code string `json:"code"`
+				}
+				if err := json.Unmarshal(
+					writer.Body.Bytes(),
+					&body,
+				); err != nil ||
+					body.Code != tc.code {
+					t.Fatalf("code = %q, want %q: %s", body.Code, tc.code, writer.Body)
+				}
 			}
 		})
 	}
