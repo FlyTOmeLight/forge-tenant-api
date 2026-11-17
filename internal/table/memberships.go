@@ -21,6 +21,12 @@ func (Membership) TableName() string { return "memberships" }
 
 type MemberState struct{ Role, Status string }
 
+type TenantAccess struct {
+	Version                                int64
+	TenantStatus, MemberStatus, UserStatus string
+	Role                                   string
+}
+
 type ProjectMember struct {
 	Role, TenantStatus, MemberStatus, UserStatus string
 	Desired, Observed, Effective                 int
@@ -110,6 +116,20 @@ func TenantMemberState(ctx context.Context, db *gorm.DB, tenantID, userID string
 		Raw(`SELECT role,status FROM memberships WHERE tenant_id=? AND user_id=?`, tenantID, userID).
 		Row().
 		Scan(&record.Role, &record.Status)
+	return record, err
+}
+
+func TenantAccessState(
+	ctx context.Context,
+	db *gorm.DB,
+	tenantID string,
+	userID string,
+) (TenantAccess, error) {
+	var record TenantAccess
+	err := db.WithContext(ctx).
+		Raw(`SELECT t.version,t.status,coalesce(m.status,''),coalesce(u.status,''),coalesce(m.role,'') FROM tenants t LEFT JOIN memberships m ON m.tenant_id=t.id AND m.user_id=? LEFT JOIN users u ON u.id=m.user_id WHERE t.id=?`, userID, tenantID).
+		Row().
+		Scan(&record.Version, &record.TenantStatus, &record.MemberStatus, &record.UserStatus, &record.Role)
 	return record, err
 }
 

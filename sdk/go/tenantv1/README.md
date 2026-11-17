@@ -155,6 +155,7 @@ routes.GET("/me", tenantv1.MiddlewareIdentity(client), func(c *core.Context) {
 - `Scope` 提取 URL 参数。`TenantID`、`ProjectID` 为 `*string`：`nil` 表示未提供，空字符串或首尾空白表示非法，返回 400，不能降级为无范围请求。标准 `net/http` 必须提供此回调；没有路径参数的路由可以返回空 `Scope`，范围只来自请求头。
 - `RequireTenant: true` 用于必须带租户的路由。仅验证身份的路由返回 `Scope{}`。
 - `Action: tenantv1.AccessRead / AccessWrite / AccessManage` 用于需要项目操作权限的路由，只要求存在项目范围。缺少项目返回 400。
+- `TenantAction: tenantv1.AccessRead / AccessWrite / AccessManage` 用于租户级路由，必须同时设置 `RequireTenant: true`，且不能与 `Action` 同时使用。普通成员只有租户级 `read`；租户级 `write` 和 `manage` 仅允许租户管理员。
 - `Action` 为空时，项目范围只验证租户成员资格和项目归属，不调用 `CheckAccess`。适用于业务对象不受项目 grants 管辖的路由；`AuthorizationContext.Action` 保持空值。
 - 提供了项目却没有租户返回 400 `SCOPE_REQUIRED`，`Action` 非法、Client 未初始化、标准适配器缺 `Scope` 回调返回脱敏的 503 并阻断 handler。
 
@@ -173,7 +174,23 @@ mux.Handle("GET /tenants/{tid}/projects/{pid}/documents/{id}",
     })(http.HandlerFunc(getDocument)))
 ```
 
-没有范围时中间件调用 `ResolveIdentity`；有租户时只调用 `ResolveScope` 取得身份并验证租户成员资格，项目范围还验证项目属于该租户。配置了 `Action` 的项目路由随后调用 `CheckAccess`，只有 `Allowed=true` 且响应范围一致才放行。不会重复调用 `ResolveIdentity`，也不按 HTTP 方法推断项目权限。`ResolveScope` 不负责项目权限，不能单独替代 `CheckAccess`。
+租户级路由使用独立的 `TenantAction`，并拒绝带项目范围的请求：
+
+```go
+tenantScope := func(r *http.Request) (tenantv1.Scope, error) {
+    tid := r.PathValue("tid")
+    return tenantv1.Scope{TenantID: &tid}, nil
+}
+mux.Handle("GET /tenants/{tid}/bookings",
+    tenantv1.Authorization(tenantv1.AuthorizationConfig{
+        Client:       client,
+        Scope:        tenantScope,
+        RequireTenant: true,
+        TenantAction: tenantv1.AccessRead,
+    })(http.HandlerFunc(listTenantBookings)))
+```
+
+没有范围时中间件调用 `ResolveIdentity`；有租户时只调用 `ResolveScope` 取得身份并验证租户成员资格，项目范围还验证项目属于该租户。配置了 `Action` 的项目路由或 `TenantAction` 的租户路由随后调用 `CheckAccess`，只有 `Allowed=true` 且响应范围一致才放行。不会重复调用 `ResolveIdentity`，也不按 HTTP 方法推断权限。`ResolveScope` 不负责项目或租户业务权限，不能单独替代 `CheckAccess`。
 
 Cookie 和 Bearer 使用同一凭据提取规则；Cookie 转发原始 method、Origin 和 CSRF。用户 ID 只取已验证 Principal。`x-forge-tenant-id`、`x-forge-project-id` 是待验证的范围选择，`ResolveScope` 通过后才发布；用 `Authorization` 的路由不接受 `x-forge-user-id` 作为身份来源，该头只由受信网关路径的 `MiddlewareTrustedIdentity` 采纳。query 参数不作为范围来源。未找到作用域保留 `404 SCOPE_NOT_FOUND`，无权限返回 403；服务调用失败、服务 key 被拒绝和响应身份／范围不一致返回脱敏的 503。任何失败均不进入业务 handler。
 

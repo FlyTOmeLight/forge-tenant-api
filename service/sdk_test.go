@@ -72,6 +72,17 @@ func TestSDKServiceIntegration(t *testing.T) {
 			t.Fatalf("access %s: %+v %v", action, access, err)
 		}
 	}
+	for _, action := range []tenantv1.AccessAction{tenantv1.AccessRead, tenantv1.AccessWrite, tenantv1.AccessManage} {
+		access, err := sdk.CheckAccess(
+			f.ctx,
+			&tenantv1.CheckAccessRequest{UserID: "member", TenantID: "t", Action: action},
+		)
+		if err != nil || access.Allowed != (action == tenantv1.AccessRead) || access.Level != 20 ||
+			!access.Read || access.Write || access.Manage ||
+			access.TenantID != "t" || access.ProjectID != "" || access.AuthorizationVersion != 1 {
+			t.Fatalf("tenant access %s: %+v %v", action, access, err)
+		}
+	}
 	noGrant, err := sdk.CheckAccess(
 		f.ctx,
 		&tenantv1.CheckAccessRequest{

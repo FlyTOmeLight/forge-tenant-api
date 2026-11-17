@@ -313,6 +313,118 @@ func TestAuthorizationScopeHeaders(t *testing.T) {
 	}
 }
 
+func TestAuthorizationTenantAction(t *testing.T) {
+	for _, tc := range []struct {
+		name, action, response string
+		project                bool
+		wantStatus             int
+		wantCode               string
+		wantCalls              int32
+	}{
+		{name: "tenant read", action: "read", response: `{"allowed":true,"tenant_id":"tenant","project_id":""}`, wantStatus: 204, wantCalls: 1},
+		{name: "tenant manage denied", action: "manage", response: `{"allowed":false,"tenant_id":"tenant","project_id":""}`, wantStatus: 403, wantCode: "ACCESS_DENIED", wantCalls: 1},
+		{name: "project scope rejected", action: "read", project: true, wantStatus: 400, wantCode: "INVALID_SCOPE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var accessCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/internal/v1/scope/resolve":
+					_ = json.NewEncoder(w).Encode(ResolveScopeResponse{
+						UserID: "user", Principal: &Principal{ID: "user"}, TenantID: "tenant",
+						OwnershipState: "active",
+					})
+				case "/internal/v1/access/check":
+					accessCalls.Add(1)
+					var in CheckAccessRequest
+					if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+						t.Error(err)
+					}
+					if in.UserID != "user" || in.TenantID != "tenant" || in.ProjectID != "" ||
+						string(in.Action) != tc.action {
+						t.Errorf("access request = %+v", in)
+					}
+					_, _ = w.Write([]byte(tc.response))
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			config := AuthorizationConfig{
+				Client: newTestClient(t, server.URL), RequireTenant: true,
+				TenantAction: AccessAction(tc.action),
+				Scope: func(*http.Request) (Scope, error) {
+					scope := Scope{TenantID: stringPointer("tenant")}
+					if tc.project {
+						scope.ProjectID = stringPointer("project")
+					}
+					return scope, nil
+				},
+			}
+			handled := false
+			request := httptest.NewRequest(http.MethodGet, "http://service.test/resource", nil)
+			request.Header.Set("Authorization", "Bearer user-key")
+			response := httptest.NewRecorder()
+			Authorization(config)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handled = true
+				auth, ok := AuthorizationFromContext(r.Context())
+				if !ok || auth.ProjectID != nil || auth.Action != AccessAction(tc.action) {
+					t.Errorf("authorization = %+v", auth)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})).ServeHTTP(response, request)
+			if tc.wantStatus == 204 {
+				if !handled || response.Code != http.StatusNoContent || accessCalls.Load() != 1 {
+					t.Fatalf(
+						"handled=%v status=%d calls=%d",
+						handled,
+						response.Code,
+						accessCalls.Load(),
+					)
+				}
+				return
+			}
+			assertIdentityError(t, response, tc.wantStatus, tc.wantCode, "")
+			if handled || accessCalls.Load() != tc.wantCalls {
+				t.Errorf("rejected request handled=%v calls=%d", handled, accessCalls.Load())
+			}
+		})
+	}
+}
+
+func TestAuthorizationRejectsInvalidTenantActionConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("invalid configuration reached the tenant API")
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name   string
+		config AuthorizationConfig
+	}{
+		{name: "tenant action without tenant requirement", config: AuthorizationConfig{
+			Client: newTestClient(t, server.URL), TenantAction: AccessRead,
+			Scope: func(*http.Request) (Scope, error) { return Scope{}, nil },
+		}},
+		{name: "project and tenant action", config: AuthorizationConfig{
+			Client: newTestClient(t, server.URL), RequireTenant: true,
+			Action: AccessRead, TenantAction: AccessRead,
+			Scope: func(*http.Request) (Scope, error) { return Scope{}, nil },
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			Authorization(tc.config)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Error("invalid configuration reached handler")
+			})).ServeHTTP(
+				response,
+				httptest.NewRequest(http.MethodGet, "http://service.test/resource", nil),
+			)
+			assertIdentityError(t, response, 503, "IDENTITY_UNAVAILABLE", "")
+		})
+	}
+}
+
 func TestAuthorizationRejectsLocally(t *testing.T) {
 	for _, tc := range []struct {
 		name, tenant, project, action, credential, wantCode               string

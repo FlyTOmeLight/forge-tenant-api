@@ -92,7 +92,9 @@ GitLab 需将授权端点指向上述 Forge 登录页，并启用 `autoSignInWit
 
 - `POST /internal/v1/identity/resolve`：服务身份调用，提交原始用户请求的证明并返回解析出的用户主体。`{"type":"session","session":..,"method":..,"origin":..,"csrf":..}` 校验 Cookie 会话，写方法必须通过 Origin / CSRF 检查；`{"type":"api_key","api_key":"ftk_..."}` 校验用户 Bearer API key。响应为 `{"id","name","email","operator"}`，不接受调用方自报 user_id；同时提交两种证明返回 `400 AMBIGUOUS_IDENTITY_PROOF`。
 - `POST /internal/v1/projects/resolve`：服务身份调用，按 tenant_id 与 project_id 返回 GitLab 项目 ID 和路径，不返回凭据。
-- 项目成员与角色、`/internal/v1/access/check` 和持久化撤权事件仍由租户 API 维护。
+- `POST /internal/v1/access/check`：服务身份调用，接受 `user_id`、`tenant_id`、`project_id` 和 `action`（`read` / `write` / `manage`）。`project_id` 为空字符串表示租户级授权；有值时检查指定项目的 grants。持久化撤权事件仍由租户 API 维护。
+
+租户级授权按 active 租户的成员资格判定：任意 active 成员获得 `read`，active 租户管理员额外获得 `write` 和 `manage`，返回的 `project_id` 为空字符串。租户不存在返回 `TENANT_NOT_FOUND`，租户停用返回 `TENANT_INACTIVE`，非成员返回 `NO_MEMBERSHIP`，`invited`、`removed` 成员或停用用户返回 `MEMBER_INACTIVE`。项目级检查仍返回 `NO_GRANT` 表示没有可用 grant。
 
 ## 角色与多团队授权
 

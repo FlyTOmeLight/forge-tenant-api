@@ -145,6 +145,9 @@ func GrantManager(ctx context.Context, db *gorm.DB, u identity.User, tid, pid st
 }
 
 func (a *Service) Access(ctx context.Context, uid, tid, pid string) (*tenantv1.CheckAccessResponse, error) {
+	if pid == "" {
+		return a.tenantAccess(ctx, uid, tid)
+	}
 	record, e := table.ProjectAuthorization(ctx, a.DB, tid, pid, uid)
 
 	if errors.Is(e, sql.ErrNoRows) {
@@ -167,6 +170,46 @@ func (a *Service) Access(ctx context.Context, uid, tid, pid string) (*tenantv1.C
 		TenantID:             tid,
 		ProjectID:            pid,
 	}, nil
+}
+
+func (a *Service) tenantAccess(
+	ctx context.Context,
+	uid string,
+	tid string,
+) (*tenantv1.CheckAccessResponse, error) {
+	record, err := table.TenantAccessState(ctx, a.DB, tid, uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &tenantv1.CheckAccessResponse{TenantID: tid, Reason: "TENANT_NOT_FOUND"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := &tenantv1.CheckAccessResponse{
+		AuthorizationVersion: record.Version,
+		TenantID:             tid,
+	}
+	if record.TenantStatus != "active" {
+		result.Reason = "TENANT_INACTIVE"
+		return result, nil
+	}
+	if record.MemberStatus == "" {
+		result.Reason = "NO_MEMBERSHIP"
+		return result, nil
+	}
+	if record.MemberStatus != "active" || record.UserStatus != "active" {
+		result.Reason = "MEMBER_INACTIVE"
+		return result, nil
+	}
+	level := 20
+	if record.Role == "admin" {
+		level = 40
+	}
+	result.Allowed = true
+	result.Level = level
+	result.Read = true
+	result.Write = level >= 40
+	result.Manage = level >= 40
+	return result, nil
 }
 
 // Source roles are combined in the business layer, inside the caller's transaction.

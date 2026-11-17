@@ -34,10 +34,15 @@ type AuthorizationConfig struct {
 	// requires a project selection. An empty action validates tenant membership
 	// and project ownership only, without consulting project grants.
 	Action AccessAction
+
+	// TenantAction is the tenant permission this route requires. It requires a
+	// tenant selection without a project and cannot be combined with Action.
+	TenantAction AccessAction
 }
 
 // AuthorizationContext records the identity, validated scope and permission
-// checked for this request. Action is empty for identity-only or tenant routes.
+// checked for this request. Action records the checked project or tenant permission
+// and is empty when the route requires no permission check.
 type AuthorizationContext struct {
 	Principal *Principal
 	TenantID  *string
@@ -73,7 +78,10 @@ func Authorization(config AuthorizationConfig) func(http.Handler) http.Handler {
 
 func (config AuthorizationConfig) authorize(r *http.Request) (*AuthorizationContext, error) {
 	if config.Client == nil || config.Client.transport == nil || config.Scope == nil ||
-		(config.Action != "" && config.Action != AccessRead && config.Action != AccessWrite && config.Action != AccessManage) {
+		(config.Action != "" && config.Action != AccessRead && config.Action != AccessWrite && config.Action != AccessManage) ||
+		(config.TenantAction != "" && config.TenantAction != AccessRead && config.TenantAction != AccessWrite && config.TenantAction != AccessManage) ||
+		(config.Action != "" && config.TenantAction != "") ||
+		(config.TenantAction != "" && !config.RequireTenant) {
 		return nil, errors.New("invalid authorization middleware configuration")
 	}
 	urlScope, err := config.Scope(r)
@@ -103,6 +111,13 @@ func (config AuthorizationConfig) authorize(r *http.Request) (*AuthorizationCont
 			Message: "required scope is missing",
 		}
 	}
+	if config.TenantAction != "" && scope.ProjectID != nil {
+		return nil, &Error{
+			Status:  http.StatusBadRequest,
+			Code:    "INVALID_SCOPE",
+			Message: "project scope is not allowed",
+		}
+	}
 	proof, err := RequestProof(r, DefaultSessionCookie)
 	if err != nil {
 		return nil, err
@@ -126,7 +141,31 @@ func (config AuthorizationConfig) authorize(r *http.Request) (*AuthorizationCont
 	result.Principal = resolved.Principal
 	result.TenantID = &resolved.TenantID
 	result.ProjectID = resolved.ProjectID
-	if result.ProjectID == nil || config.Action == "" {
+	if result.ProjectID == nil {
+		if config.TenantAction == "" {
+			return result, nil
+		}
+		access, err := config.Client.CheckAccess(r.Context(), &CheckAccessRequest{
+			UserID: result.Principal.ID, TenantID: *result.TenantID,
+			ProjectID: "", Action: config.TenantAction,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !access.Allowed {
+			return nil, &Error{
+				Status:  http.StatusForbidden,
+				Code:    "ACCESS_DENIED",
+				Message: "tenant permission denied",
+			}
+		}
+		if access.TenantID != *result.TenantID || access.ProjectID != "" {
+			return nil, errors.New("access response has invalid scope")
+		}
+		result.Action = config.TenantAction
+		return result, nil
+	}
+	if config.Action == "" {
 		return result, nil
 	}
 	access, err := config.Client.CheckAccess(r.Context(), &CheckAccessRequest{
